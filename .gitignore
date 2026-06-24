@@ -1,0 +1,8 @@
+# Backups con timestamp del dashboard
+*.bak
+*.bak-*
+
+# Temporales del sistema
+Thumbs.db
+desktop.ini
+~$*
