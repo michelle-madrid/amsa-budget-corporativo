@@ -23,7 +23,7 @@ const CHART_SCALE = 1.5;
 
 /* ---------------- Bar chart: Real vs Presupuesto por año + 2027 ---------------- */
 function BarYears({ series, unit, decimals, showProp }) {
-  const A = window.ADA;
+  const A = window.CORP;
   const C = A.theme();
   const rows = [
     { y: '2022', real: series[2022].real, plan: series[2022].plan },
@@ -31,14 +31,20 @@ function BarYears({ series, unit, decimals, showProp }) {
     { y: '2024', real: series[2024].real, plan: series[2024].plan },
     { y: '2025', real: series[2025].real, plan: series[2025].plan },
   ];
+  // 2026 YTD (acumulado ene–may): se muestra como barra aparte (color teal) si hay datos.
+  if (series[2026] && (series[2026].real || series[2026].plan))
+    rows.push({ y: '2026 YTD', real: series[2026].real, plan: series[2026].plan, ytd: true });
+  // 2026 FY (presupuesto anual): SOLO Ppto, sin Real (barra de presupuesto).
+  if (series['2026fy'] && series['2026fy'].plan)
+    rows.push({ y: '2026 FY', plan: series['2026fy'].plan, fyBudget: true });
   // La barra de Propuesta 2027 solo aparece con el switch activado (capa aditiva).
   if (showProp) rows.push({ y: 'Prop 27', prop: series[2027].prop, prop27: true });
   const max = Math.max(1, ...rows.flatMap(r => [r.real || 0, r.plan || 0, r.prop || 0]));
   const [boxRef, boxW] = useBoxWidth(780);
-  const W = Math.max(360, Math.round(boxW / CHART_SCALE)), H = 200, padL = 8, padB = 26, padT = 12;
+  const W = Math.max(360, Math.round(boxW / CHART_SCALE)), H = 200, padL = 26, padB = 26, padT = 12;
   const innerH = H - padB - padT;
   const groupW = (W - padL) / rows.length;
-  const div = unit === 'kUSD' ? 1e3 : 1e6;
+  const div = unit === 'num' ? 1 : unit === 'kUSD' ? 1e3 : 1e6;
 
   const yTicks = 4;
   const ticks = Array.from({ length: yTicks + 1 }, (_, i) => (max / yTicks) * i);
@@ -51,7 +57,7 @@ function BarYears({ series, unit, decimals, showProp }) {
         return (
           <g key={i}>
             <line x1={padL} x2={W} y1={yy} y2={yy} stroke={C.line} strokeWidth="1" />
-            <text x={padL} y={yy - 3} fontSize="8.5" fill={C.fgSoft} fontFamily="Montserrat">{(t / div).toFixed(unit === 'kUSD' ? 0 : 0)}</text>
+            <text x={3} y={yy - 3} fontSize="8.5" fill={C.fgSoft} fontFamily="Montserrat">{(t / div).toFixed(0)}</text>
           </g>
         );
       })}
@@ -66,17 +72,19 @@ function BarYears({ series, unit, decimals, showProp }) {
           const y = padT + innerH - h;
           return <g>
             <rect x={x} y={y} width={bw} height={Math.max(0, h)} fill={color} rx="1.5" />
-            {val > 0 && <text x={x + bw / 2} y={y - 3} fontSize="7.5" fill={C.fg3} textAnchor="middle" fontFamily="Montserrat" fontWeight="700">{A.fmt(val, unit, decimals)}</text>}
+            {val > 0 && <text x={x + bw / 2} y={y - 3} fontSize="7.5" fill={C.fg3} textAnchor="middle" fontFamily="Montserrat" fontWeight="700">{A.fmt(val, unit, 1)}</text>}
           </g>;
         };
         return (
           <g key={i}>
             {r.prop27
               ? bar(r.prop, C.yellow, -bw / 2)
-              : <g>
-                  {bar(r.real, r.ytd ? C.teal : C.tealDeep, -bw - gap / 2)}
-                  {bar(r.plan, C.tealLight, gap / 2)}
-                </g>}
+              : r.fyBudget
+                ? bar(r.plan, C.tealLight, -bw / 2)
+                : <g>
+                    {bar(r.real, C.tealDeep, -bw - gap / 2)}
+                    {bar(r.plan, C.tealLight, gap / 2)}
+                  </g>}
             <text x={cx} y={H - 9} fontSize="9.5" fill={C.fg3} textAnchor="middle" fontFamily="Montserrat" fontWeight="600">{r.y}</text>
           </g>
         );
@@ -88,12 +96,15 @@ function BarYears({ series, unit, decimals, showProp }) {
 
 /* ---------------- Cumplimiento histórico (% Real / Ppto) ---------------- */
 function ComplianceBars({ series, thr, unit }) {
-  const A = window.ADA;
+  const A = window.CORP;
   const C = A.theme();
   const rows = [2022, 2023, 2024, 2025].map(y => {
     const pct = series[y].plan ? series[y].real / series[y].plan : 0;
     return { y: String(y), pct };
   });
+  // 2026 YTD: % de cumplimiento del acumulado ene–may (Real / Ppto), barra atenuada.
+  if (series[2026] && (series[2026].real || series[2026].plan))
+    rows.push({ y: '2026 YTD', pct: series[2026].plan ? series[2026].real / series[2026].plan : 0, ytd: true });
   const [boxRef, boxW] = useBoxWidth(480);
   const W = Math.max(280, Math.round(boxW / CHART_SCALE)), H = 200, padB = 26, padT = 18, padL = 8;
   const innerH = H - padB - padT;
@@ -116,7 +127,7 @@ function ComplianceBars({ series, thr, unit }) {
         const c = colorFor(r.pct);
         return (
           <g key={i}>
-            <rect x={cx - bw / 2} y={y} width={bw} height={Math.max(0, h)} fill={c} rx="1.5" opacity={r.ytd ? 0.75 : 1} />
+            <rect x={cx - bw / 2} y={y} width={bw} height={Math.max(0, h)} fill={c} rx="1.5" />
             <text x={cx} y={y - 5} fontSize="9" fill={c} textAnchor="middle" fontFamily="Montserrat" fontWeight="700">{(r.pct * 100).toFixed(0)}%</text>
             <text x={cx} y={H - 9} fontSize="9.5" fill={C.fg3} textAnchor="middle" fontFamily="Montserrat" fontWeight="600">{r.y}</text>
           </g>
@@ -129,7 +140,7 @@ function ComplianceBars({ series, thr, unit }) {
 
 /* ---------------- Distribuible por compañía (donut) ---------------- */
 function Donut({ dist, unit, decimals }) {
-  const A = window.ADA;
+  const A = window.CORP;
   const C = A.theme();
   // val === null → compañía no seleccionada (N/A); cualquier número (incl. 0) es un valor real.
   const data = A.COMPANIAS.map(c => ({ ...c, val: dist[c.id] == null ? null : dist[c.id] })).sort((a, b) => (b.val || 0) - (a.val || 0));

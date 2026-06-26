@@ -107,11 +107,14 @@ function SwitchToggle({ label, on, onClick, color }) {
 
 /* ---------------- Filter bar ---------------- */
 function FilterBar(props) {
-  const A = window.ADA;
-  const { st, set, gerOptions, itemOptions } = props;
+  const A = window.CORP;
+  const { st, set, gerOptions, itemOptions, tcOptions, apOptions } = props;
   // Opciones de Ítem y Gerencia según el modo de datos activo (corp/dist/ambos).
   const itemVals = itemOptions || A.D.items;
   const itemOpts = itemVals.map(v => ({ value: v, label: A.dispItem(v) }));
+  // Tipo Costo (C1/C3/Comercialización) y ¿Aplica? (Sí/No) desde CECOS, por código.
+  const tcOpts = (tcOptions || []).map(v => ({ value: v, label: v }));
+  const apOpts = (apOptions || []).map(v => ({ value: v, label: v }));
   // Incluye cualquier VP presente en los registros (p. ej. una gerencia reasignada
   // a otra VP desde el Diccionario), además del catálogo base.
   const vpOpts = [...new Set([...A.D.vps, ...A.records.map(r => r.vp)])].map(v => ({ value: v, label: A.dispVP(v) }));
@@ -137,9 +140,36 @@ function FilterBar(props) {
   const yearOpts = [
     { value: 2022, label: '2022' }, { value: 2023, label: '2023' },
     { value: 2024, label: '2024' }, { value: 2025, label: '2025' },
+    { value: 2026, label: '2026 YTD' },     // acumulado ene–may 2026 (Real vs Ppto)
+    { value: '2026fy', label: '2026 Ppto FY' }, // presupuesto anual 2026 (solo Ppto, sin Real)
   ];
   const onYears = (v) => set({ years: v }); // años reales; permite vacío (Limpiar)
   const showProp = !!st.showProp;
+
+  // Tipo Costo y ¿Aplica? (filtros secundarios) van SIEMPRE dentro del botón "+".
+  const moreRef = useRefF(null);
+  const [moreOpen, setMoreOpen] = useStateF(false);
+  useEffectF(() => {
+    if (!moreOpen) return;
+    const f = e => { if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false); };
+    document.addEventListener('mousedown', f);
+    return () => document.removeEventListener('mousedown', f);
+  }, [moreOpen]);
+  const extras = [
+    <div className="fgroup" style={{ minWidth: 150 }} key="tc">
+      <div className="fcap">Tipo Costo</div>
+      <div className="fctl">
+        <MultiSelect options={tcOpts} selected={st.tcs || []} onChange={v => set({ tcs: v })} placeholder="Todos" />
+      </div>
+    </div>,
+    <div className="fgroup" style={{ minWidth: 150 }} key="ap">
+      <div className="fcap">¿Aplica?</div>
+      <div className="fctl">
+        <MultiSelect options={apOpts} selected={st.aps || []} onChange={v => set({ aps: v })} placeholder="Todas" />
+      </div>
+    </div>,
+  ];
+  const nMore = ((st.tcs && st.tcs.length) ? 1 : 0) + ((st.aps && st.aps.length) ? 1 : 0);
 
   return (
     <div className="filters">
@@ -206,13 +236,36 @@ function FilterBar(props) {
           </select>
         </div>
       </div>
+
+      {/* Tipo Costo + ¿Aplica? siempre dentro del "+". */}
+      <div className="fgroup" style={{ minWidth: 'auto', position: 'relative' }} ref={moreRef}>
+        <div className="fcap" aria-hidden="true">&nbsp;</div>
+        <button type="button" title="Más filtros (Tipo Costo, ¿Aplica?)"
+          onClick={() => setMoreOpen(o => !o)}
+          style={{ width: 46, height: 30, boxSizing: 'border-box', padding: 0, position: 'relative',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: '#fff', border: '1px solid var(--amsa-teal)', borderTop: 'none', borderRadius: '0 0 3px 3px',
+            cursor: 'pointer', fontSize: 17, fontWeight: 700, lineHeight: 1, color: 'var(--amsa-teal)' }}>
+          +{nMore > 0
+            ? <span style={{ position: 'absolute', top: -4, right: -4, background: 'var(--amsa-yellow)', color: '#3a2e10', borderRadius: 8, fontSize: 9, fontWeight: 800, padding: '1px 5px' }}>{nMore}</span>
+            : null}
+        </button>
+        {moreOpen && (
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 60,
+            background: '#fff', border: '1px solid var(--teal-border)', borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,.18)', padding: 12, display: 'flex',
+            flexDirection: 'column', gap: 12, minWidth: 190 }}>
+            {extras}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 /* ---------------- View tabs ---------------- */
 function ViewTabs({ view, onChange }) {
-  const A = window.ADA;
+  const A = window.CORP;
   return (
     <div className="viewtabs">
       {A.VISTAS.map(v => (

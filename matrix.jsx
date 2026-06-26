@@ -10,7 +10,7 @@ const DISP_BY = { vp: 'dispVP', ger: 'dispGer', item: 'dispItem' };
 const DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', item: 'Ítem Relevante' };
 
 function flattenTree(tree, expanded, q, dims) {
-  const A = window.ADA;
+  const A = window.CORP;
   const d0 = A[DISP_BY[dims[0]]], d1 = A[DISP_BY[dims[1]]], d2 = A[DISP_BY[dims[2]]];
   const ql = (q || '').trim().toLowerCase();
   const has = (s) => s.toLowerCase().includes(ql);
@@ -46,7 +46,7 @@ function flattenTree(tree, expanded, q, dims) {
 }
 
 function Twig({ row, expanded, onToggle, dims, onPick, active }) {
-  const A = window.ADA;
+  const A = window.CORP;
   const name = A[DISP_BY[dims[row.level - 1]]](row.node.name);
   const isOpen = expanded.has(row.key);
   return (
@@ -151,7 +151,7 @@ function ColHeader({ col, sort, onSortDir, onPin, onHide, pinned, style, classNa
 
 /* ============================ MATRIX ============================ */
 function Matrix(props) {
-  const A = window.ADA;
+  const A = window.CORP;
   const { tree, showProp, nYears, yearAgg, yearsLabel, unit, thr, decimals, versionLabel, q, sort, onSort, onSortDir,
     hiddenCols, pinnedCols, onHide, onPin, expanded, onToggle, onEditProp, companiesActive, onRowFilter, filterSel, onClearFilter } = props;
   // "Limpiar ×" en el encabezado de la columna de jerarquía: aparece solo si hay

@@ -1,4 +1,4 @@
-/* global React, ReactDOM, ADA, FilterBar, ViewTabs, KpiCards, Matrix, BarYears, ComplianceBars, Donut,
+/* global React, ReactDOM, CORP, FilterBar, ViewTabs, KpiCards, Matrix, BarYears, ComplianceBars, Donut,
    useTweaks, TweaksPanel, TweakSection, TweakSlider, TweakRadio, TweakToggle */
 const { useState, useMemo, useCallback, useEffect } = React;
 
@@ -62,7 +62,7 @@ function _xlsx(sheetName, headers, rows) {
 
 /* ---------- Pestaña Diccionario: CECO→Gerencia/VP (editable) y catálogo de Ítem ---------- */
 function DictView(props) {
-  const A = window.ADA;
+  const A = window.CORP;
   const { vpov, setVpov, nameov, setNameov } = props; // estado elevado al App: al editar, el Dashboard se reagrupa solo
   const [q, setQ] = React.useState('');
   const [editCeco, setEditCeco] = React.useState(null);
@@ -81,14 +81,26 @@ function DictView(props) {
     if (!v || v === A.baseItem(itemKey)) delete item[itemKey]; else item[itemKey] = v;
     return { ...o, item };
   });
-  const cecos = (window.ADA_DICT && window.ADA_DICT.cecos) || [];
+  const cecos = (window.CORP_DICT && window.CORP_DICT.cecos) || [];
   const vpKeys = Array.from(new Set(cecos.map(r => r.v))).sort((a, b) => A.dispVP(a).localeCompare(A.dispVP(b), 'es'));
   const setVp = (ceco, vpKey, origV) => setVpov(o => { const n = { ...o }; if (!vpKey || vpKey === origV) delete n[ceco]; else n[ceco] = vpKey; return n; });
   const gerOv = nameov.ger || {};
+  // Alias de Gerencia: clave canónica → [nombres crudos como venían en los archivos].
+  // Se muestran como sub-filas bajo el CECO cuya Gerencia es esa clave canónica.
+  const aliasByCanon = {};
+  Object.keys(A.GER_ALIAS || {}).forEach(raw => {
+    const c = A.GER_ALIAS[raw].ger;
+    (aliasByCanon[c] = aliasByCanon[c] || []).push(raw);
+  });
+  // Categoría por código: los CECO corporativos empiezan con "1000" (AMSA S.A.);
+  // el resto son de compañías = Distribuibles.
+  const cecoCat = c => (String(c || '').startsWith('1000') ? 'Corporativo' : 'Distribuible');
   const cecoRows = cecos.map(r => {
     const vpKey = vpov[r.c] || r.v;
-    return { ceco: r.c, gerKey: r.g, ger: A.dispGer(r.g), gerOverridden: !!gerOv[r.g], vpKey, vp: A.dispVP(vpKey), origV: r.v, overridden: !!vpov[r.c] };
-  }).filter(r => !ql || r.ceco.toLowerCase().includes(ql) || r.ger.toLowerCase().includes(ql) || r.vp.toLowerCase().includes(ql));
+    return { ceco: r.c, cat: cecoCat(r.c), gerKey: r.g, ger: A.dispGer(r.g), gerOverridden: !!gerOv[r.g], vpKey, vp: A.dispVP(vpKey), origV: r.v, overridden: !!vpov[r.c], aliases: aliasByCanon[r.g] || null, tc: r.tc || '—', ap: r.ap || '—' };
+  }).filter(r => !ql || r.ceco.toLowerCase().includes(ql) || r.ger.toLowerCase().includes(ql) || r.vp.toLowerCase().includes(ql) || (r.aliases && r.aliases.some(n => n.toLowerCase().includes(ql))));
+  // Corporativo primero, Distribuible después (orden estable dentro de cada grupo).
+  const cecoRowsByCat = ['Corporativo', 'Distribuible'].flatMap(cat => cecoRows.filter(r => r.cat === cat));
   const nOver = Object.keys(vpov).length;
   // Catálogo de Ítem Relevante = unión de TODOS los ítems presentes en los
   // datos (corporativo + distribuibles), no solo el catálogo corporativo:
@@ -122,10 +134,18 @@ function DictView(props) {
         <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ maxHeight: 580, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={{ ...th, width: 118 }}>CECO</th><th style={th}>Gerencia</th><th style={th}>Vicepresidencia</th></tr></thead>
+              <thead><tr><th style={{ ...th, width: 110 }}>CECO</th><th style={th}>Gerencia</th><th style={th}>Vicepresidencia</th><th style={{ ...th, width: 96 }}>Tipo Costo</th><th style={{ ...th, width: 74 }}>¿Aplica?</th></tr></thead>
               <tbody>
-                {cecoRows.map((r) => (
-                  <tr key={r.ceco} style={r.overridden ? { background: 'var(--accent-wash)' } : undefined}>
+                {cecoRowsByCat.map((r, ri) => (
+                  <React.Fragment key={r.ceco}>
+                  {(ri === 0 || cecoRowsByCat[ri - 1].cat !== r.cat) && (
+                    <tr>
+                      <td colSpan="5" style={{ padding: '7px 12px', fontSize: 10.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--amsa-teal-deep)', background: 'var(--teal-wash2)', borderTop: '1px solid var(--line-soft)' }}>
+                        {r.cat}{r.cat === 'Distribuible' ? ' (compañías)' : ''}
+                      </td>
+                    </tr>
+                  )}
+                  <tr style={r.overridden ? { background: 'var(--accent-wash)' } : undefined}>
                     <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.ceco}</td>
                     <td style={td}>
                       {editGer === r.ceco
@@ -155,9 +175,24 @@ function DictView(props) {
                             {r.overridden && <button title="Restablecer" onClick={() => setVp(r.ceco, null, r.origV)} style={iconBtn}>↺</button>}
                           </span>}
                     </td>
+                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums', color: 'var(--fg-2)' }}>{r.tc}</td>
+                    <td style={{ ...td, fontWeight: r.ap === 'No' ? 700 : undefined, color: r.ap === 'No' ? 'var(--red)' : 'var(--fg-2)' }}>{r.ap}</td>
                   </tr>
+                  {/* Sub-filas: nombres crudos con los que esta Gerencia venía en los archivos (alias unificados). */}
+                  {r.aliases && r.aliases.map(raw => (
+                    <tr key={r.ceco + '|' + raw} style={{ background: 'var(--teal-wash2)' }}>
+                      <td style={{ ...td, borderBottom: '1px solid var(--line-soft)' }}></td>
+                      <td style={{ ...td, paddingLeft: 26, color: 'var(--fg-muted)', fontStyle: 'italic' }}>
+                        <span title="Nombre con el que venía en los archivos (unificado bajo el nombre oficial de arriba)">↳ {raw}</span>
+                      </td>
+                      <td style={td}></td>
+                      <td style={td}></td>
+                      <td style={td}></td>
+                    </tr>
+                  ))}
+                  </React.Fragment>
                 ))}
-                {cecoRows.length === 0 && <tr><td style={td} colSpan="3">Sin resultados</td></tr>}
+                {cecoRows.length === 0 && <tr><td style={td} colSpan="5">Sin resultados</td></tr>}
               </tbody>
             </table>
           </div>
@@ -202,6 +237,359 @@ function DictView(props) {
   );
 }
 
+/* ---------- Pestaña Tabla Resumen: comparador configurable por período ---------- */
+// Catálogo de columnas (períodos/métricas) comparables, AGRUPADO por subcategoría
+// (Real → Ppto → Forecast). El orden aquí define el orden de despliegue (desplegable
+// y columnas de la tabla); dentro de cada grupo van de más nuevo a más antiguo. La
+// PRIMERA columna seleccionada es la "base" contra la que se calculan Dif y % Dif.
+// El Forecast 5+7 (cuando se cargue) viene de window.CORP_FCST26 (por Ítem).
+const RESUMEN_COL_CATALOG = [
+  // ── Real ──
+  { key: 'r2026', kind: 'real', y: 2026, cat: 'Real', label: 'Real 2026 YTD' },
+  { key: 'r2025', kind: 'real', y: 2025, cat: 'Real', label: 'Real 2025' },
+  { key: 'r2024', kind: 'real', y: 2024, cat: 'Real', label: 'Real 2024' },
+  { key: 'r2023', kind: 'real', y: 2023, cat: 'Real', label: 'Real 2023' },
+  { key: 'r2022', kind: 'real', y: 2022, cat: 'Real', label: 'Real 2022' },
+  // ── Ppto ──
+  { key: 'prop',  kind: 'prop',          cat: 'Ppto', label: 'Ppto 2027' },
+  { key: 'pfy26', kind: 'planfy',        cat: 'Ppto', label: 'Ppto 2026 FY' },
+  { key: 'p2026', kind: 'plan', y: 2026, cat: 'Ppto', label: 'Ppto 2026 YTD' },
+  { key: 'p2025', kind: 'plan', y: 2025, cat: 'Ppto', label: 'Ppto 2025' },
+  { key: 'p2024', kind: 'plan', y: 2024, cat: 'Ppto', label: 'Ppto 2024' },
+  { key: 'p2023', kind: 'plan', y: 2023, cat: 'Ppto', label: 'Ppto 2023' },
+  { key: 'p2022', kind: 'plan', y: 2022, cat: 'Ppto', label: 'Ppto 2022' },
+  // ── Forecast ──
+  { key: 'fcst',  kind: 'fcst',          cat: 'Forecast', label: 'Fcst 5+7 2026' },
+];
+const RESUMEN_DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', item: 'Ítem Relevante' };
+
+function ResumenView({ overrides, unit, dec }) {
+  const A = window.CORP;
+  const [dataMode, setDataMode] = React.useState('both');
+  const [vps, setVps] = React.useState([]);
+  const [gers, setGers] = React.useState([]);
+  const [items, setItems] = React.useState([]);
+  const [tcs, setTcs] = React.useState([]);   // Tipo Costo (C1/C3/Comercialización)
+  const [aps, setAps] = React.useState([]);   // ¿Aplica? (Sí/No)
+  const [groupMode, setGroupMode] = React.useState('item'); // 'item' = Ítem›VP›Ger · 'org' = VP›Ger›Ítem
+  const [selCols, setSelCols] = React.useState(['prop', 'fcst', 'r2025']); // columnas a comparar (NO incluyen la base)
+  const [baseKey, setBaseKey] = React.useState('pfy26'); // columna base (fija, va primero) para Dif/% Dif
+  const [showDif, setShowDif] = React.useState(true);
+  const [colsOpen, setColsOpen] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(() => new Set());
+  const [q, setQ] = React.useState('');
+  const colsRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!colsOpen) return;
+    const f = e => { if (colsRef.current && !colsRef.current.contains(e.target)) setColsOpen(false); };
+    document.addEventListener('mousedown', f);
+    return () => document.removeEventListener('mousedown', f);
+  }, [colsOpen]);
+  // Overflow de la barra de filtros: los que no quepan en una línea se colapsan en
+  // un botón "+" (igual que el Dashboard). Colapsa de derecha a izquierda, de a uno,
+  // con histéresis para no oscilar.
+  const [nHidden, setNHidden] = React.useState(0);
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const barRef = React.useRef(null);
+  const moreRef = React.useRef(null);
+  const collapseW = React.useRef(0);
+  React.useEffect(() => {
+    if (!moreOpen) return;
+    const f = e => { if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false); };
+    document.addEventListener('mousedown', f);
+    return () => document.removeEventListener('mousedown', f);
+  }, [moreOpen]);
+  const N_COLLAPSIBLE = 5; // VP, Gerencia, Ítem, Tipo Costo, ¿Aplica? (los que pueden ir al "+")
+  React.useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const measure = () => {
+      // La barra envuelve (no encoge): detectamos salto de fila por la ALTURA total.
+      // Si la barra es más alta que un solo control + padding, hay 2+ filas → colapsar.
+      const maxH = Array.from(el.children).reduce((m, k) => Math.max(m, k.offsetHeight), 0);
+      const wrapped = el.clientHeight > maxH + 36; // padding 28 + tolerancia
+      if (wrapped && nHidden < N_COLLAPSIBLE) {
+        collapseW.current = el.clientWidth; setNHidden(n => Math.min(N_COLLAPSIBLE, n + 1));
+      } else if (!wrapped && nHidden > 0 && el.clientWidth > collapseW.current + 150) {
+        setNHidden(n => Math.max(0, n - 1));
+      }
+    };
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [nHidden, dataMode]);
+
+  const corpOn = dataMode === 'corp' || dataMode === 'both';
+  const distOn = dataMode === 'dist' || dataMode === 'both';
+  const setFlags = (c, d) => setDataMode(c && d ? 'both' : c ? 'corp' : d ? 'dist' : 'none');
+
+  const dims = groupMode === 'item' ? ['item', 'vp', 'ger'] : ['vp', 'ger', 'item'];
+  // La base se elige aparte (cualquier columna). Las "columnas a comparar" (selCols)
+  // NO incluyen la base. La base SIEMPRE va primero; las demás siguen el orden del catálogo.
+  const baseCol = RESUMEN_COL_CATALOG.find(c => c.key === baseKey)
+    || RESUMEN_COL_CATALOG.find(c => selCols.includes(c.key)) || null;
+  const compareCols = RESUMEN_COL_CATALOG.filter(c => selCols.includes(c.key) && (!baseCol || c.key !== baseCol.key));
+  const cols = baseCol ? [baseCol, ...compareCols] : compareCols;
+  const neededYears = [...new Set(cols.filter(c => c.y).map(c => c.y))];
+
+  const tree = A.buildTree({
+    years: neededYears, showProp: true, yearAgg: 'byYear', version: 'ORI',
+    dataMode, companies: [], vps, gers, items, tcs, aps, groupBy: dims,
+    sort: { key: 'real', dir: 'desc' }, overrides, growth: A.DEF_GROWTH,
+  });
+
+  // Forecast 5+7 2026 por nodo (pendiente; CORP_FCST26 es por Ítem → se reparte por
+  // igual entre los registros de cada Ítem y se suma por nodo). Mientras esté en 0
+  // no afecta nada; cuando se cargue, queda disponible como columna.
+  (function attachFcst() {
+    const FCST = window.CORP_FCST26 || {};
+    const rec = A.recordById;
+    const its = [];
+    const collect = ns => ns.forEach(n => n.leaf ? n.recIds.forEach(id => its.push(rec(id).item)) : collect(n.children));
+    collect(tree.vpNodes);
+    const cnt = {}; its.forEach(it => { cnt[it] = (cnt[it] || 0) + 1; });
+    const fOf = it => { const v = FCST[it] != null ? FCST[it] : (FCST[A.dispItem(it)] != null ? FCST[A.dispItem(it)] : 0); return v / (cnt[it] || 1); };
+    const set = n => { n._fcst = n.leaf ? n.recIds.reduce((s, id) => s + fOf(rec(id).item), 0) : n.children.reduce((s, c) => s + set(c), 0); return n._fcst; };
+    tree.vpNodes.forEach(set);
+    tree._totalFcst = tree.vpNodes.reduce((s, n) => s + (n._fcst || 0), 0);
+  })();
+
+  const yrOf = (agg, y) => (agg.yr && agg.yr[y]) || { real: 0, ver: 0 };
+  const valOf = (col, node) => {
+    const agg = node.agg;
+    if (col.kind === 'prop') return agg.prop || 0;
+    if (col.kind === 'fcst') return node._fcst || 0;
+    if (col.kind === 'planfy') return agg.fy26 || 0; // Ppto 2026 anual (FY)
+    if (col.kind === 'real') return yrOf(agg, col.y).real;
+    if (col.kind === 'plan') return yrOf(agg, col.y).ver;
+    return 0;
+  };
+
+  const flat = window.flattenTree(tree, expanded, q, dims);
+  const onToggle = key => setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const expandAll = () => {
+    const n = new Set();
+    tree.vpNodes.forEach(n1 => { n.add(n1.name); (n1.children || []).forEach(n2 => n.add(n1.name + '|' + n2.name)); });
+    setExpanded(n);
+  };
+  const collapseAll = () => setExpanded(new Set());
+
+  const dimsOpt = A.dimsFor({ dataMode, companies: [], vps });
+  const vpOpts = [...new Set([...A.D.vps, ...A.records.map(r => r.vp)])].map(v => ({ value: v, label: A.dispVP(v) }));
+  const gerOpts = dimsOpt.gers.map(v => ({ value: v, label: A.dispGer(v) }));
+  const itemOpts = dimsOpt.items.map(v => ({ value: v, label: A.dispItem(v) }));
+  const tcOpts = (dimsOpt.tcs || []).map(v => ({ value: v, label: v }));
+  const apOpts = (dimsOpt.aps || []).map(v => ({ value: v, label: v }));
+
+  const headerLbl = dims.map(d => RESUMEN_DIM_LBL[d]).join(' › ');
+  // Mismo alto (34px) y estilo que los <select> para que «Datos» quede alineado con «Estructura».
+  const chipSt = on => ({ height: 34, boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: on ? '1px solid var(--amsa-teal)' : '1px solid var(--teal-border)', padding: '0 14px', cursor: 'pointer', borderRadius: 6, background: on ? 'var(--amsa-teal)' : '#fff', color: on ? '#fff' : 'var(--fg-soft)', fontFamily: 'var(--font-sans)', fontWeight: 600, fontSize: 12.5 });
+  const cap = { fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 9.5, letterSpacing: '.07em', color: '#8a9499', textTransform: 'uppercase', marginBottom: 4 };
+  const fctlSel = { height: 34, padding: '0 10px', border: '1px solid #cdd6d8', borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-sans)', color: 'var(--ink)', cursor: 'pointer', background: '#fff' };
+  const valHdr = isBase => ({ background: isBase ? '#717981' : 'var(--amsa-yellow)', color: isBase ? '#fff' : '#3a2e10' });
+  const num = (v, k, extra) => <td key={k} className="tnum" style={{ textAlign: 'right', ...extra }}>{A.fmt(v, unit, dec)}</td>;
+  const rowCells = node => {
+    const baseVal = baseCol ? valOf(baseCol, node) : 0;
+    const out = [];
+    cols.forEach((c, i) => {
+      const v = valOf(c, node);
+      out.push(num(v, c.key));
+      if (baseCol && c.key !== baseCol.key && showDif) {
+        const dif = baseVal - v;
+        const pct = v ? dif / Math.abs(v) : null;
+        out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, unit, dec)}</td>);
+        out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 0)}</td>);
+      }
+    });
+    return out;
+  };
+
+  // Filtros que pueden colapsar al "+" cuando no caben (de derecha a izquierda).
+  const collapsibleEls = [
+    <div className="fgroup grow" style={{ minWidth: 130 }} key="vp">
+      <div style={cap}>Vicepresidencia</div>
+      <div className="fctl">
+        <MultiSelect options={vpOpts} selected={vps} placeholder="Todas" searchable
+          onChange={v => { setVps(v); setGers(g => g.filter(x => !v.length || A.records.some(r => v.includes(r.vp) && r.ger === x))); }} />
+      </div>
+    </div>,
+    <div className="fgroup grow" style={{ minWidth: 130 }} key="ger">
+      <div style={cap}>Gerencia</div>
+      <div className="fctl">
+        <MultiSelect options={gerOpts} selected={gers} placeholder="Todas" searchable onChange={setGers} />
+      </div>
+    </div>,
+    <div className="fgroup grow" style={{ minWidth: 130 }} key="item">
+      <div style={cap}>Ítem Relevante</div>
+      <div className="fctl">
+        <MultiSelect options={itemOpts} selected={items} placeholder="Todas" searchable onChange={setItems} />
+      </div>
+    </div>,
+    <div className="fgroup" style={{ minWidth: 128 }} key="tc">
+      <div style={cap}>Tipo Costo</div>
+      <div className="fctl">
+        <MultiSelect options={tcOpts} selected={tcs} placeholder="Todos" onChange={setTcs} />
+      </div>
+    </div>,
+    <div className="fgroup" style={{ minWidth: 110 }} key="ap">
+      <div style={cap}>¿Aplica?</div>
+      <div className="fctl">
+        <MultiSelect options={apOpts} selected={aps} placeholder="Todas" onChange={setAps} />
+      </div>
+    </div>,
+  ];
+  const nShown = N_COLLAPSIBLE - nHidden;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, margin: '4px 0 12px' }}>
+        <div>
+          <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>Tabla Resumen</h2>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Comparador por período · {headerLbl} · {unit}</div>
+        </div>
+      </div>
+
+      {/* Barra de controles: envuelve; lo que pasaría a una 2ª fila se colapsa al "+". */}
+      <div className="filters" style={{ flexWrap: 'wrap', gap: 14, alignItems: 'flex-end' }} ref={barRef}>
+        <div className="fgroup" style={{ minWidth: 200 }}>
+          <div style={cap}>Datos</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" style={chipSt(corpOn)} onClick={() => setFlags(!corpOn, distOn)}>Corporativo</button>
+            <button type="button" style={chipSt(distOn)} onClick={() => setFlags(corpOn, !distOn)}>Distribuible</button>
+          </div>
+        </div>
+        <div className="fgroup" style={{ minWidth: 190 }}>
+          <div style={cap}>Estructura</div>
+          <select value={groupMode} onChange={e => { setGroupMode(e.target.value); setExpanded(new Set()); }} style={fctlSel}>
+            <option value="item">Ítem › VP › Gerencia</option>
+            <option value="org">VP › Gerencia › Ítem</option>
+          </select>
+        </div>
+        <div className="fgroup" style={{ minWidth: 160 }}>
+          <div style={cap}>Columna Base</div>
+          <select value={baseCol ? baseCol.key : ''} style={fctlSel}
+            title="Columna fija (va primero) contra la que se calculan Dif y % Dif"
+            onChange={e => {
+              const k = e.target.value, old = baseCol ? baseCol.key : null;
+              setBaseKey(k);
+              // la base sale de «columnas a comparar»; la base anterior pasa a comparar.
+              setSelCols(p => { let n = p.filter(x => x !== k); if (old && old !== k && !n.includes(old)) n = [...n, old]; return n; });
+            }}>
+            {['Real', 'Ppto', 'Forecast'].map(cat => (
+              <optgroup key={cat} label={cat}>
+                {RESUMEN_COL_CATALOG.filter(c => c.cat === cat).map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+        <div className="fgroup" style={{ minWidth: 170, position: 'relative' }} ref={colsRef}>
+          <div style={cap}>Columnas a comparar</div>
+          <button type="button" onClick={() => setColsOpen(o => !o)} style={{ ...fctlSel, textAlign: 'left', width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <span>{compareCols.length} período{compareCols.length === 1 ? '' : 's'}</span><span style={{ fontSize: 9, color: 'var(--amsa-teal)' }}>▾</span>
+          </button>
+          {colsOpen && (
+            <div style={{ position: 'absolute', top: 'calc(100% + 3px)', left: 0, zIndex: 50, background: '#fff', border: '1px solid var(--line)', borderRadius: 6, boxShadow: 'var(--shadow-2)', padding: 6, minWidth: 220, maxHeight: 340, overflowY: 'auto' }}>
+              {['Real', 'Ppto', 'Forecast'].map(cat => {
+                const opts = RESUMEN_COL_CATALOG.filter(c => c.cat === cat && (!baseCol || c.key !== baseCol.key)); // la base no se compara consigo misma
+                if (!opts.length) return null;
+                return (
+                <div key={cat}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--fg-soft)', margin: '6px 4px 2px' }}>{cat}</div>
+                  {opts.map(c => (
+                    <label key={c.key} className="ms-opt" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={selCols.includes(c.key)}
+                        onChange={() => setSelCols(p => p.includes(c.key) ? p.filter(x => x !== c.key) : [...p, c.key])} />
+                      <span>{c.label}</span>
+                    </label>
+                  ))}
+                </div>);
+              })}
+            </div>
+          )}
+        </div>
+
+        {collapsibleEls.slice(0, nShown)}
+
+        {nHidden > 0 && (
+          <div className="fgroup" style={{ minWidth: 'auto', position: 'relative' }} ref={moreRef}>
+            <div style={cap} aria-hidden="true">&nbsp;</div>
+            <button type="button" style={{ ...fctlSel, width: 46, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: 'var(--amsa-teal)' }}
+              title="Más filtros" onClick={() => setMoreOpen(o => !o)}>+</button>
+            {moreOpen && (
+              <div style={{ position: 'absolute', top: 'calc(100% + 3px)', right: 0, zIndex: 50, background: '#fff', border: '1px solid var(--line)', borderRadius: 6, boxShadow: 'var(--shadow-2)', padding: 12, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 220 }}>
+                {collapsibleEls.slice(nShown)}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="matrix-card" style={{ marginTop: 12 }}>
+        <div className="matrix-top">
+          <div>
+            <h3>Comparación por período</h3>
+            <div className="mt-sub">{({ both: 'Corporativo + Distribuible', corp: 'Corporativo', dist: 'Distribuible', none: 'Sin datos' })[dataMode]}{baseCol ? ' · base: ' + baseCol.label : ''}</div>
+          </div>
+          <div className="toolbar">
+            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+              <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar VP / Gerencia / Ítem…"
+                style={{ height: 30, width: 200, padding: '0 26px 0 10px', boxSizing: 'border-box', border: '1px solid var(--teal-200)', borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', outline: 'none' }} />
+              {q && <button type="button" onClick={() => setQ('')} style={{ position: 'absolute', right: 6, border: 0, background: 'transparent', cursor: 'pointer', color: 'var(--fg-soft)', fontSize: 14, padding: 2 }}>×</button>}
+            </span>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600, cursor: 'pointer' }}>
+              <input type="checkbox" checked={showDif} onChange={e => setShowDif(e.target.checked)} /> Mostrar Dif / % Dif
+            </label>
+            <button type="button" onClick={() => expanded.size ? collapseAll() : expandAll()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              {expanded.size ? '⤒ Colapsar todo' : '⤓ Expandir todo'}
+            </button>
+          </div>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          {cols.length === 0
+            ? <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>
+            : (
+            <table className="mtable">
+              <thead>
+                <tr className="cols">
+                  <th className="left" style={{ textAlign: 'left' }}>{headerLbl}</th>
+                  {cols.map((c, i) => {
+                    const isBase = baseCol && c.key === baseCol.key;
+                    const blocks = [<th key={c.key} style={valHdr(isBase)}>{c.label}{isBase ? ' (base)' : ''}</th>];
+                    if (!isBase && showDif) {
+                      blocks.push(<th key={c.key + '_d'} style={{ background: 'var(--amsa-teal-deep)', color: '#fff' }}>Dif</th>);
+                      blocks.push(<th key={c.key + '_p'} style={{ background: 'var(--amsa-teal-deep)', color: '#fff' }}>% Dif</th>);
+                    }
+                    return blocks;
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {flat.map(row => (
+                  <tr key={row.key} className={'row-' + row.type}>
+                    <td className="name"><Twig row={row} expanded={expanded} onToggle={onToggle} dims={dims} /></td>
+                    {rowCells(row.node)}
+                  </tr>
+                ))}
+                {flat.length === 0 && <tr><td className="name" colSpan={1 + cols.length + (showDif ? (cols.length - 1) * 2 : 0)}>Sin resultados</td></tr>}
+                <tr className="row-total">
+                  <td className="name">Total</td>
+                  {rowCells({ agg: tree.total, _fcst: tree._totalFcst })}
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="note" style={{ padding: '8px 14px 12px' }}>
+          Elige Datos, filtros (VP / Gerencia / Ítem), estructura y los períodos a comparar. La 1ª columna es la base; «Dif» = base − período, «% Dif» = Dif / período.
+          Ppto 2027 = Propuesta 2027 (editable en el Dashboard) · Forecast 5+7 2026: pendiente de carga.
+        </div>
+      </div>
+    </div>
+  );
+}
 /* ---------- Panel de colores en vivo (editable desde el front, persiste en este equipo) ---------- */
 const THEME_DEFAULTS = {
   '--amsa-teal': '#2a8a96', '--amsa-teal-deep': '#14515a', '--amsa-teal-light': '#b9dde0',
@@ -230,7 +618,7 @@ function ColorPanel({ onApply, edit }) {
   const [ov, setOv] = React.useState(function () { try { const s = localStorage.getItem('ada_colors_v1'); return s ? JSON.parse(s) : {}; } catch (e) { return {}; } });
   const [copied, setCopied] = React.useState(false);
   const persist = (n) => { try { localStorage.setItem('ada_colors_v1', JSON.stringify(n)); } catch (e) {} };
-  const refresh = () => { if (window.ADA && window.ADA.resetTheme) window.ADA.resetTheme(); if (onApply) onApply(); };
+  const refresh = () => { if (window.CORP && window.CORP.resetTheme) window.CORP.resetTheme(); if (onApply) onApply(); };
   const setColor = (k, val) => {
     setOv(prev => { const n = Object.assign({}, prev, { [k]: val }); persist(n); return n; });
     document.documentElement.style.setProperty(k, val, 'important');
@@ -250,10 +638,17 @@ function ColorPanel({ onApply, edit }) {
   const nOv = Object.keys(ov).length;
   const sw = { width: 38, height: 22, border: '1px solid var(--teal-border)', borderRadius: 5, padding: 0, background: 'none', cursor: 'pointer', flexShrink: 0 };
   const rowS = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '3px 0', fontSize: 12, color: 'var(--fg-2)' };
+  if (!edit) return null;
   return (
-    <div style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 9, fontFamily: 'var(--font-sans)' }}>
-      {edit && open && (
-        <div style={{ width: 244, maxHeight: 'calc(100vh - 90px)', overflowY: 'auto', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 12, boxShadow: '0 10px 36px rgba(20,40,50,.18)', padding: '12px 14px' }}>
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', alignSelf: 'center', marginLeft: 8, fontFamily: 'var(--font-sans)' }}>
+      <button onClick={() => setOpen(o => !o)} title="Editar colores del dashboard" style={{
+        display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 12px', borderRadius: 16,
+        border: 0, background: 'var(--amsa-teal)', color: '#fff', fontWeight: 600, fontSize: 11.5,
+        fontFamily: 'var(--font-sans)', cursor: 'pointer', boxShadow: '0 1px 5px rgba(20,40,50,.18)' }}>
+        <span style={{ fontSize: 13 }}>🎨</span> Colores{nOv ? ' ·' + nOv : ''}
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 9999, width: 244, maxHeight: 'calc(100vh - 160px)', overflowY: 'auto', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 12, boxShadow: '0 10px 36px rgba(20,40,50,.18)', padding: '12px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <b style={{ fontFamily: 'var(--font-disp)', fontSize: 13, color: 'var(--ink)' }}>Colores del dashboard</b>
             <button onClick={() => setOpen(false)} title="Cerrar" style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--fg-soft)', fontSize: 14, lineHeight: 1 }}>✕</button>
@@ -280,17 +675,184 @@ function ColorPanel({ onApply, edit }) {
           </div>
         </div>
       )}
-      {edit && (
-        <button onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 7, height: 36, padding: '0 14px', border: 0, borderRadius: 20, background: 'var(--amsa-teal)', color: '#fff', fontWeight: 700, fontSize: 12.5, fontFamily: 'var(--font-disp)', cursor: 'pointer', boxShadow: '0 4px 14px rgba(20,40,50,.22)' }}>
-          <span style={{ fontSize: 15 }}>🎨</span> Colores{nOv ? ' ·' + nOv : ''}
-        </button>
-      )}
+    </div>
+  );
+}
+
+/* ---------- Pestaña Dotaciones: dashboard de FTE (Propios / Contratista) ---------- */
+function DotacionesView() {
+  const A = window.CORP;
+  const { useState } = React;
+  const unit = 'num', dec = 1;                 // FTE (Nº), 1 decimal
+  const [showProp, setShowProp] = useState(true);   // Propios
+  const [showCont, setShowCont] = useState(true);   // Contratista
+  const [years, setYears] = useState([2025]);
+  const [vps, setVps] = useState([]);
+  const [gers, setGers] = useState([]);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [q, setQ] = useState('');
+  const MS = window.MultiSelect, Chip = window.ModeChip;
+
+  const dataMode = (showProp && showCont) ? 'dot' : showProp ? 'propios' : showCont ? 'contratista' : 'none';
+  const opts = { years, dataMode, vps, gers, groupBy: ['vp', 'ger'], sort: { key: 'real', dir: 'desc' },
+                 showProp: false, version: 'ORI', growth: A.DEF_GROWTH, overrides: {} };
+  const tree = A.buildTree(opts);
+  const series = A.annualSeries(opts);
+  const thr = { red: 10, yellow: 0 };
+  const fmtN = v => A.fmt(v, unit, dec);
+
+  // Opciones de VP / Gerencia según el modo (propios/contratista/ambos).
+  const baseRecs = A.dotRecords.filter(r => dataMode === 'dot' ? true : r.src === dataMode);
+  const vpOpts = [...new Set(baseRecs.map(r => r.vp))].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
+  const gerVals = vps.length ? [...new Set(baseRecs.filter(r => vps.includes(r.vp)).map(r => r.ger))] : [...new Set(baseRecs.map(r => r.ger))];
+  const gerOpts = gerVals.sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
+  const yearOpts = [{ value: 2022, label: '2022' }, { value: 2023, label: '2023' }, { value: 2024, label: '2024' },
+                    { value: 2025, label: '2025' }, { value: 2026, label: '2026 YTD' }, { value: '2026fy', label: '2026 Ppto FY' }];
+
+  const T = tree.total;
+  const cump = T.ytdVersion ? T.ytdReal / T.ytdVersion : 0;
+  const dif = T.ytdReal - T.ytdVersion;
+  const cumpCol = A.kpiColor(T.ytdReal, T.ytdVersion, thr);
+  const histYears = years.filter(y => typeof y === 'number');
+  const yLbl = [...histYears.map(String), ...(years.includes('2026fy') ? ['2026 Ppto FY'] : [])].join(' + ') || '—';
+  const modeLbl = dataMode === 'dot' ? 'Propios + Contratista' : dataMode === 'propios' ? 'Propios' : dataMode === 'contratista' ? 'Contratista' : 'Sin datos';
+  const kpis = [
+    { label: 'Dotación Real', value: fmtN(T.ytdReal), unit: 'FTE', sub: yLbl + ' · promedio' },
+    { label: 'Dotación Ppto', value: fmtN(T.ytdVersion), unit: 'FTE', sub: 'Presupuesto' },
+    { label: 'Desviación', value: (dif > 0 ? '+' : '') + fmtN(dif), unit: 'FTE', color: A.kpiHex(dif > 0 ? 'rojo' : 'azul'),
+      sub: T.ytdVersion ? (dif > 0 ? '+' : '') + A.fmtPct(dif / Math.abs(T.ytdVersion), 1) + ' vs ppto' : '—' },
+    { label: 'Cumplimiento', value: A.fmtPct(cump, 0), color: A.kpiHex(cumpCol), sub: 'Real / Ppto' },
+  ];
+
+  // Filas de la tabla: VP (subtotal) → Gerencia, con búsqueda y expandir/colapsar.
+  const ql = q.trim().toLowerCase();
+  const expandAll = () => setExpanded(new Set(tree.vpNodes.map(n => n.name)));
+  const collapseAll = () => setExpanded(new Set());
+  const cap = { fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 9.5, letterSpacing: '.07em', color: '#8a9499', textTransform: 'uppercase', marginBottom: 4 };
+  const th = { textAlign: 'right', padding: '7px 12px', fontSize: 11, fontWeight: 700, color: '#fff', background: 'var(--amsa-teal-deep)', position: 'sticky', top: 0 };
+  const td = { padding: '6px 12px', fontSize: 12.5, borderBottom: '1px solid var(--line-soft)', textAlign: 'right' };
+  const cellN = (real, ver) => {
+    const d = real - ver, col = A.kpiHex(A.kpiColor(real, ver, thr));
+    return [<td key="r" className="tnum" style={td}>{fmtN(real)}</td>,
+            <td key="p" className="tnum" style={td}>{fmtN(ver)}</td>,
+            <td key="d" className="tnum" style={{ ...td, color: d > 0 ? 'var(--red)' : 'var(--fg-2)' }}>{(d > 0 ? '+' : '') + fmtN(d)}</td>,
+            <td key="c" className="tnum" style={{ ...td, color: col, fontWeight: 700 }}>{ver ? A.fmtPct(real / ver, 0) : '—'}</td>];
+  };
+
+  return (
+    <div>
+      <div style={{ margin: '4px 0 12px' }}>
+        <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>Dotaciones (FTE)</h2>
+        <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Dotación promedio anual (Nº) · Real vs Presupuesto · {modeLbl}</div>
+      </div>
+
+      <div className="filters" style={{ flexWrap: 'wrap', gap: 14, alignItems: 'flex-end' }}>
+        <div className="fgroup" style={{ minWidth: 220 }}>
+          <div style={cap}>Datos</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Chip label="Propios" on={showProp} onClick={() => setShowProp(v => !v)} />
+            <Chip label="Contratista" on={showCont} onClick={() => setShowCont(v => !v)} />
+          </div>
+        </div>
+        <div className="fgroup" style={{ minWidth: 140 }}>
+          <div style={cap}>Año</div>
+          <div className="fctl"><MS options={yearOpts} selected={years} onChange={setYears} placeholder="Año" /></div>
+        </div>
+        <div className="fgroup grow" style={{ minWidth: 180 }}>
+          <div style={cap}>Vicepresidencia</div>
+          <div className="fctl"><MS options={vpOpts} selected={vps} searchable placeholder="Todas"
+            onChange={v => { setVps(v); setGers(g => g.filter(x => !v.length || baseRecs.some(r => v.includes(r.vp) && r.ger === x))); }} /></div>
+        </div>
+        <div className="fgroup grow" style={{ minWidth: 180 }}>
+          <div style={cap}>Gerencia</div>
+          <div className="fctl"><MS options={gerOpts} selected={gers} searchable placeholder="Todas" onChange={setGers} /></div>
+        </div>
+      </div>
+
+      <KpiCards kpis={kpis} unit={unit} />
+
+      <div className="grid3" style={{ gridTemplateColumns: '1.5fr 1fr', marginTop: 12 }}>
+        <div className="panel">
+          <h3>Dotación Real vs Presupuesto por año</h3>
+          <div className="ph-sub">Histórico anual (FTE)</div>
+          <BarYears series={series} unit={unit} decimals={dec} showProp={false} />
+          <div className="legend">
+            <span><i style={{ background: 'var(--amsa-teal-deep)' }}></i>Real</span>
+            <span><i style={{ background: 'var(--amsa-teal-light)' }}></i>Presupuesto</span>
+          </div>
+        </div>
+        <div className="panel">
+          <h3>Cumplimiento del presupuesto</h3>
+          <div className="ph-sub">Real / Presupuesto por año</div>
+          <ComplianceBars series={series} thr={thr} unit={unit} />
+        </div>
+      </div>
+
+      <div className="matrix-card" style={{ marginTop: 12 }}>
+        <div className="matrix-top">
+          <div><h3>Dotación {yLbl}</h3><div className="mt-sub">{modeLbl} · FTE promedio</div></div>
+          <div className="toolbar">
+            <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar VP / Gerencia…"
+              style={{ height: 30, width: 220, padding: '0 10px', border: '1px solid var(--teal-200)', borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', outline: 'none', marginRight: 6 }} />
+            <button type="button" onClick={() => expanded.size ? collapseAll() : expandAll()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-sans)', whiteSpace: 'nowrap' }}>
+              {expanded.size ? '⤒ Colapsar todo' : '⤓ Expandir todo'}
+            </button>
+          </div>
+        </div>
+        <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: 'left' }}>VP / Gerencia</th>
+              <th style={th}>Real</th><th style={th}>Ppto</th><th style={th}>Dif</th><th style={th}>Cumpl.</th>
+            </tr></thead>
+            <tbody>
+              {tree.vpNodes.map(vp => {
+                const matchVP = !ql || vp.name.toLowerCase().includes(ql);
+                const kids = (vp.children || []).filter(g => matchVP || g.name.toLowerCase().includes(ql));
+                if (ql && !matchVP && kids.length === 0) return null;
+                const open = expanded.has(vp.name) || (ql && kids.length > 0);
+                return (
+                  <React.Fragment key={vp.name}>
+                    <tr style={{ background: 'var(--teal-wash2)', cursor: 'pointer' }} onClick={() => setExpanded(p => { const n = new Set(p); n.has(vp.name) ? n.delete(vp.name) : n.add(vp.name); return n; })}>
+                      <td style={{ padding: '6px 12px', fontSize: 12.5, borderBottom: '1px solid var(--line-soft)', fontWeight: 700, color: 'var(--ink)' }}>
+                        <span style={{ display: 'inline-block', width: 14, color: 'var(--amsa-teal)' }}>{open ? '▾' : '▸'}</span>{vp.name}
+                      </td>
+                      {cellN(vp.agg.ytdReal, vp.agg.ytdVersion)}
+                    </tr>
+                    {open && kids.map(g => {
+                      const selG = gers.includes(g.name);
+                      return (
+                      <tr key={vp.name + '|' + g.name} title="Clic para filtrar por esta Gerencia (toda la pestaña)"
+                        onClick={() => setGers(p => p.includes(g.name) ? p.filter(x => x !== g.name) : [...p, g.name])}
+                        style={{ cursor: 'pointer', background: selG ? 'var(--accent-wash)' : undefined }}>
+                        <td style={{ padding: '5px 12px 5px 30px', fontSize: 12, borderBottom: '1px solid var(--line-soft)', color: selG ? 'var(--accent-ink)' : 'var(--fg-2)', fontWeight: selG ? 700 : undefined }}>
+                          <span style={{ display: 'inline-block', width: 12, color: 'var(--amsa-teal)' }}>{selG ? '✓' : ''}</span>{g.name}
+                        </td>
+                        {cellN(g.agg.ytdReal, g.agg.ytdVersion)}
+                      </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              })}
+              <tr style={{ background: 'var(--amsa-teal-deep)', color: '#fff', fontWeight: 700 }}>
+                <td style={{ padding: '8px 12px', fontSize: 12.5 }}>Total {modeLbl}</td>
+                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{fmtN(T.ytdReal)}</td>
+                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{fmtN(T.ytdVersion)}</td>
+                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{(T.ytdReal - T.ytdVersion > 0 ? '+' : '') + fmtN(T.ytdReal - T.ytdVersion)}</td>
+                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{T.ytdVersion ? A.fmtPct(cump, 0) : '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
 
 function App() {
-  const A = ADA;
+  const A = window.CORP;
   const TX = window.TEXTOS;
   // Carga inicial: mezcla los defaults con lo guardado en localStorage (persiste
   // preferencias de presentación en este equipo).
@@ -320,7 +882,7 @@ function App() {
   const [st, setSt] = useState({
     month: 11,          // año completo (sin filtro mensual: solo acumulado anual)
     dataMode: 'both',   // corp | dist | both | none (chips Corporativo/Distribuible)
-    items: [], vps: [], gers: [], companies: [],
+    items: [], vps: [], gers: [], companies: [], tcs: [], aps: [],
     version: 'ORI',
     years: [2025],      // años reales seleccionados (2022..2025)
     showProp: false,    // Propuesta 2027 como capa de comparación aditiva
@@ -392,7 +954,9 @@ function App() {
 
   const showProp = !!st.showProp;
   const histYears = st.years.filter(y => typeof y === 'number').sort((a, b) => a - b);
-  const yearsLabel = histYears.length ? histYears.join(' + ') : '—';
+  const hasFY = st.years.includes('2026fy'); // 2026 Ppto FY (solo Ppto)
+  const labelParts = [...histYears.map(String), ...(hasFY ? ['2026 Ppto FY'] : [])];
+  const yearsLabel = labelParts.length ? labelParts.join(' + ') : '—';
   const multiYear = histYears.length > 1; // con >1 año se puede elegir acumulado/promedio en la tabla
   // Con más de 2 años, las tarjetas no listan los años (no caben) → "N años".
   const periodLbl = histYears.length > 2 ? `${histYears.length} años` : yearsLabel;
@@ -404,7 +968,7 @@ function App() {
 
   const opts = useMemo(() => ({
     years: st.years, showProp, donutMetric: st.donutMetric, yearAgg: st.yearAgg, version: st.version, dataMode: st.dataMode,
-    companies: st.companies, vps: st.vps, gers: st.gers, items: st.items,
+    companies: st.companies, vps: st.vps, gers: st.gers, items: st.items, tcs: st.tcs, aps: st.aps,
     groupBy: groupDims, sort: st.sort, overrides, growth,
   }), [st, showProp, overrides, vpov]);
 
@@ -459,7 +1023,7 @@ function App() {
     });
   }, []);
   // Limpiar todos los filtros de categoría (VP / Gerencia / Ítem) a la vez.
-  const onClearFilter = useCallback(() => setSt(s => ({ ...s, vps: [], gers: [], items: [] })), []);
+  const onClearFilter = useCallback(() => setSt(s => ({ ...s, vps: [], gers: [], items: [], tcs: [], aps: [] })), []);
   const expandAll = () => {
     const n = new Set();
     tree.vpNodes.forEach(vp => { n.add(vp.name); vp.children.forEach(g => n.add(vp.name + '|' + g.name)); });
@@ -603,14 +1167,14 @@ function App() {
             </h1>
             <div className="sub">{TX.header.subtitulo}</div>
           </div>
-          <img className="hdr-logo" src={window.ADA_LOGO || 'assets/logo_amsa.png'} alt="Antofagasta Minerals" />
+          <img className="hdr-logo" src={window.CORP_LOGO || 'assets/logo_amsa.png'} alt="Antofagasta Minerals" />
         </div>
       </div>
       <div className="accent"><i className="t"></i><i className="r"></i><i className="y"></i></div>
 
       <div className="app-wrap">
         <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '2px solid var(--teal-100)' }}>
-          {[['dashboard', 'Dashboard'], ['dict', 'Diccionario (CECO · Ítem)']].map(([id, lbl]) => (
+          {[['dashboard', 'Gastos Corporativos'], ['resumen', 'Tabla Resumen Gastos'], ['dotaciones', 'Dotaciones AMSA (FTE)'], ['dict', 'Diccionario (CECO · Ítem)']].map(([id, lbl]) => (
             <button key={id} type="button" onClick={() => setPage(id)} style={{
               border: 0, background: 'transparent', cursor: 'pointer', padding: '8px 16px',
               fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 13, marginBottom: -2,
@@ -630,9 +1194,13 @@ function App() {
           }}>
             <span style={{ fontSize: 13 }}>✏️</span> Modo Edición
           </button>
+          <ColorPanel onApply={onColorApply} edit={editMode} />
         </div>
-        {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} /> : <React.Fragment>
-        <FilterBar st={st} set={set} gerOptions={dims.gers} itemOptions={dims.items} />
+        {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} />
+         : page === 'dotaciones' ? <DotacionesView />
+         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} />
+         : <React.Fragment>
+        <FilterBar st={st} set={set} gerOptions={dims.gers} itemOptions={dims.items} tcOptions={dims.tcs} apOptions={dims.aps} />
 
         <KpiCards kpis={kpis} unit={unit} />
 
@@ -778,8 +1346,6 @@ function App() {
         <TweakSlider label="Umbral rojo" value={t.thrRed} min={3} max={30} step={1} unit="%" onChange={v => setTweak('thrRed', v)} />
         <TweakSlider label="Umbral amarillo" value={t.thrYellow} min={1} max={t.thrRed - 1} step={1} unit="%" onChange={v => setTweak('thrYellow', v)} />
       </TweaksPanel>
-
-      <ColorPanel onApply={onColorApply} edit={editMode} />
     </div>
   );
 }

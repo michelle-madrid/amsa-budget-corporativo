@@ -273,21 +273,21 @@ def maps_actuales(html):
         raise ValueError("No encontré el bloque de datos (data.js) dentro del HTML.")
     data_js = gzip.decompress(base64.b64decode(m.group(2))).decode("utf-8")
     ada_part = data_js.split("window.DIST_DATA", 1)[0]
-    ada_json = ada_part.split("window.ADA_DATA = ", 1)[1].rstrip().rstrip(";").strip()
+    ada_json = ada_part.split("window.CORP_DATA = ", 1)[1].rstrip().rstrip(";").strip()
     ada = json.loads(ada_json)
     return ada.get("itemNames", {}), ada.get("vpNames", {}), ada.get("gerNames", {})
 
 
 def cola_actual(html):
-    """Conserva tal cual los bloques finales window.ADA_DICT (cecos -> override de
-    VP por CECO) y window.ADA_LOGO (logo del header), que no se derivan del Excel."""
+    """Conserva tal cual los bloques finales window.CORP_DICT (cecos -> override de
+    VP por CECO) y window.CORP_LOGO (logo del header), que no se derivan del Excel."""
     m = _asset_regex().search(html)
     if not m:
         raise ValueError("No encontré el bloque de datos (data.js) dentro del HTML.")
     data_js = gzip.decompress(base64.b64decode(m.group(2))).decode("utf-8")
-    idx = data_js.find("\nwindow.ADA_DICT")
+    idx = data_js.find("\nwindow.CORP_DICT")
     if idx == -1:
-        idx = data_js.find("window.ADA_DICT")
+        idx = data_js.find("window.CORP_DICT")
         return ("\n" + data_js[idx:]) if idx != -1 else ""
     return data_js[idx:]
 
@@ -297,7 +297,7 @@ def construir_data_js(records, vps, gers, items, maps, dist, cola=""):
     ada = {"records": records, "vps": vps, "gers": gers, "items": items,
            "itemNames": itemNames, "vpNames": vpNames, "gerNames": gerNames}
     j = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))
-    return ("window.ADA_DATA = " + j(ada) + ";\n" +
+    return ("window.CORP_DATA = " + j(ada) + ";\n" +
             "window.DIST_DATA = " + j({"records": dist}) + ";" + cola)
 
 
@@ -324,7 +324,7 @@ def actualizar(bbdd_path, dist_path, html_path, log):
     maps = maps_actuales(html)
     cola = cola_actual(html)
     log(f"  Mapas de nombres conservados: {len(maps[0])} ítems · {len(maps[1])} VP · {len(maps[2])} gerencias.")
-    log(f"  Bloques ADA_DICT/ADA_LOGO conservados: {len(cola)} chars.")
+    log(f"  Bloques CORP_DICT/CORP_LOGO conservados: {len(cola)} chars.")
 
     data_js = construir_data_js(records, vps, gers, items, maps, dist, cola)
     # respaldo del HTML anterior

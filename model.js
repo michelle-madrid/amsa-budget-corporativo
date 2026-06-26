@@ -1,6 +1,6 @@
 /* =============================================================
-   ADA · Actividad Corporativa + Distribuibles — MODELO DE DATOS
-   JS puro (sin JSX). Expone window.ADA (helpers + cómputo).
+   CORP · Actividad Corporativa + Distribuibles — MODELO DE DATOS
+   JS puro (sin JSX). Expone window.CORP (helpers + cómputo).
    Base real: 2022–2025 (Real vs Plan) leído del Excel corporativo.
    Derivados (transparentes, editables/configurables):
      · YTD 2026  — Ppto 2026 proyectado + Real mensual hasta el mes
@@ -8,8 +8,9 @@
      · Distribuible por compañía (MLP/ANT/CEN/CMZ) — claves de prorrateo
    ============================================================= */
 (function () {
-  const D = window.ADA_DATA;
+  const D = window.CORP_DATA;
   const DIST = window.DIST_DATA || { records: [] };
+  const DOT = window.DOT_DATA || { records: [] };   // Dotaciones (FTE) — Propios/Contratista
 
   // ===== Textos editables del dashboard (los edita la herramienta "Editar textos") =====
   const TEXTOS = window.TEXTOS = /*TEXTOS-BEGIN*/{
@@ -138,36 +139,83 @@
   // Derivamos campos por registro.
   const DEF_GROWTH = { g26: 1.045, gReal26: 1.052, g27: 1.030, ori: 0.955 };
 
+  // ============================================================
+  //  UNIFICACIÓN DE GERENCIAS (alias)  ← edita aquí los "juntar bajo un nombre"
+  // ------------------------------------------------------------
+  //  Distintas exportaciones de SAP truncan el MISMO nombre de Gerencia de forma
+  //  distinta (ej.: corporativo "Gcia.Riesgo y Ctrl I" vs distribuible
+  //  "Grcia. Riesgos, Compliance y Control Interno"). Esta tabla dice qué nombres
+  //  crudos se unen bajo UNA sola Gerencia (clave 'ger') y, opcionalmente, bajo qué
+  //  Vicepresidencia ('vp'). El nombre que se MUESTRA se define en gerNames (o se
+  //  edita en el Diccionario). Vive en model.js a propósito: NO se sobrescribe al
+  //  refrescar los datos con el .bat, así las unificaciones se conservan.
+  //  Formato:  'Nombre crudo tal cual viene en los datos': { ger: 'ClaveDestino', vp: 'ClaveVP' }
+  const GER_ALIAS = {
+    'Gcia.Riesgo y Ctrl I':                         { ger: 'Grcia.Riesg.CompyCIn', vp: 'VP Finanzas' },
+    'Grcia. Riesgos, Compliance y Control Interno': { ger: 'Grcia.Riesg.CompyCIn', vp: 'VP Finanzas' },
+  };
+
   // Normaliza un set de registros crudos {comp?,vp,ger,item,y2022..y2025}.
   function normalize(list, offset, src) {
     return list.map((r, i) => {
       const idx = offset + i;
-      const seed = (r.comp || '') + '|' + r.vp + '|' + r.ger + '|' + r.item + '|' + idx;
+      // Unifica Gerencias equivalentes (ver GER_ALIAS) antes de armar el registro.
+      const al = GER_ALIAS[r.ger];
+      const ger = al ? al.ger : r.ger;
+      const vp = (al && al.vp) ? al.vp : r.vp;
+      const seed = (r.comp || '') + '|' + vp + '|' + ger + '|' + r.item + '|' + idx;
       return {
         id: idx, src, comp: r.comp || null,
-        vp: r.vp, _vp0: r.vp, ger: r.ger, item: r.item,
+        vp: vp, _vp0: vp, ger: ger, item: r.item,
+        // Clasificación por código (CECOS): Tipo Costo (C1/C3/Comercialización) y ¿Aplica? (Sí/No).
+        tc: r.tc || null, ap: r.ap || null,
         hist: {
           2022: { real: r.y2022.real || 0, plan: r.y2022.plan || 0 },
           2023: { real: r.y2023.real || 0, plan: r.y2023.plan || 0 },
           2024: { real: r.y2024.real || 0, plan: r.y2024.plan || 0 },
           2025: { real: r.y2025.real || 0, plan: r.y2025.plan || 0 },
+          // 2026 YTD: suma de los meses 2026.01–2026.05 (Real y Ppto) cargada del Excel.
+          2026: { real: (r.y2026 && r.y2026.real) || 0, plan: (r.y2026 && r.y2026.plan) || 0 },
         },
+        // 2026 FY: presupuesto ANUAL (2026.TOTAL Plan). Serie aparte, solo Ppto
+        // (el Real del total no se usa). 0 si el registro no trae presupuesto anual.
+        fy26: (r.y2026fy && r.y2026fy.plan) || 0,
         _seed: seed, _weights: monthWeights(seed),
       };
     });
   }
-  // Corporativo (BBDD) y Distribuible (4 compañías) en un único índice por id.
+  // Dotaciones (FTE): VP → Gerencia, sin ítem ni compañía. Cada registro trae su
+  // propio src ('propios' | 'contratista'). Misma estructura de años que el gasto.
+  function normalizeDot(list, offset) {
+    return list.map((r, i) => {
+      const idx = offset + i;
+      const seed = 'dot|' + r.src + '|' + r.vp + '|' + r.ger + '|' + idx;
+      const h = (o) => ({ real: (o && o.real) || 0, plan: (o && o.plan) || 0 });
+      return {
+        id: idx, src: r.src, comp: null,
+        vp: r.vp, _vp0: r.vp, ger: r.ger, item: r.ger, tc: null, ap: null,
+        hist: { 2022: h(r.y2022), 2023: h(r.y2023), 2024: h(r.y2024), 2025: h(r.y2025), 2026: h(r.y2026) },
+        fy26: (r.y2026fy && r.y2026fy.plan) || 0,
+        _seed: seed, _weights: monthWeights(seed),
+      };
+    });
+  }
+  // Corporativo (BBDD), Distribuible (4 compañías) y Dotaciones en un único índice por id.
   const corpRecords = normalize(D.records, 0, 'corp');
   const distRecords = normalize(DIST.records, corpRecords.length, 'dist');
-  const records = corpRecords.concat(distRecords);
+  const dotRecords = normalizeDot(DOT.records, corpRecords.length + distRecords.length);
+  const records = corpRecords.concat(distRecords).concat(dotRecords);
 
-  // Conjunto activo según modo de datos (corp | dist | both) + compañías.
+  // Conjunto activo según modo de datos. Gasto: corp | dist | both (+ compañías).
+  // Dotaciones: propios | contratista | dot (ambas).
   function activeRecords(opts) {
     const mode = opts.dataMode || 'corp';
     const cset = opts.companies && opts.companies.length ? new Set(opts.companies) : null;
     let recs = [];
     if (mode === 'corp' || mode === 'both') recs = recs.concat(corpRecords);
     if (mode === 'dist' || mode === 'both') recs = recs.concat(cset ? distRecords.filter(r => cset.has(r.comp)) : distRecords);
+    if (mode === 'propios' || mode === 'dot') recs = recs.concat(dotRecords.filter(r => r.src === 'propios'));
+    if (mode === 'contratista' || mode === 'dot') recs = recs.concat(dotRecords.filter(r => r.src === 'contratista'));
     return recs;
   }
 
@@ -230,6 +278,9 @@
     // las métricas de ejecución; el promedio de comparación = ytdReal / nYears.
     const showProp = !!opts.showProp;
     const years = (opts.years || []).filter(y => typeof y === 'number');
+    // '2026fy' (pseudo-año del filtro Año): suma el Ppto ANUAL 2026 (fy26) al
+    // Presupuesto; NO aporta Real (es solo presupuesto).
+    const wantFY = (opts.years || []).includes('2026fy');
     // El Plan del BBDD es el Presupuesto Original; no se aplica ningún ajuste.
     const versionAdj = p => p;
 
@@ -237,6 +288,8 @@
       if (opts.vps && opts.vps.length && !opts.vps.includes(rec.vp)) return false;
       if (opts.gers && opts.gers.length && !opts.gers.includes(rec.ger)) return false;
       if (opts.items && opts.items.length && !opts.items.includes(rec.item)) return false;
+      if (opts.tcs && opts.tcs.length && !opts.tcs.includes(rec.tc)) return false;
+      if (opts.aps && opts.aps.length && !opts.aps.includes(rec.ap)) return false;
       return true;
     });
 
@@ -253,15 +306,19 @@
         real += r; ver += v;
         if (byYear) yr[y] = { real: r, ver: v };
       }
-      const m = { real, version: ver, ytdReal: real, ytdVersion: ver };
+      if (wantFY) {                       // 2026 Ppto FY: solo Ppto, sin Real
+        ver += rec.fy26 || 0;
+        if (byYear) yr['2026fy'] = { real: 0, ver: rec.fy26 || 0 };
+      }
+      const m = { real, version: ver, ytdReal: real, ytdVersion: ver, fy26: rec.fy26 || 0 };
       if (showProp) m.prop = (opts.overrides && opts.overrides[rec.id] != null) ? opts.overrides[rec.id] : derived(rec, opts.growth).prop27;
       if (byYear) m.yr = yr;
       return m;
     }
     const zero = () => {
       const z = showProp
-        ? { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, prop: 0 }
-        : { real: 0, version: 0, ytdReal: 0, ytdVersion: 0 };
+        ? { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, prop: 0 }
+        : { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0 };
       if (byYear) z.yr = {};
       return z;
     };
@@ -344,6 +401,8 @@
       if (opts.vps && opts.vps.length && !opts.vps.includes(rec.vp)) return false;
       if (opts.gers && opts.gers.length && !opts.gers.includes(rec.ger)) return false;
       if (opts.items && opts.items.length && !opts.items.includes(rec.item)) return false;
+      if (opts.tcs && opts.tcs.length && !opts.tcs.includes(rec.tc)) return false;
+      if (opts.aps && opts.aps.length && !opts.aps.includes(rec.ap)) return false;
       return true;
     });
     const g = opts.growth || DEF_GROWTH;
@@ -352,19 +411,20 @@
       2022: { real: 0, plan: 0 }, 2023: { real: 0, plan: 0 },
       2024: { real: 0, plan: 0 }, 2025: { real: 0, plan: 0 },
       2026: { real: 0, plan: 0 },
+      '2026fy': { plan: 0 },
       2027: { prop: 0 },
     };
-    const mi = opts.monthIndex;
     filtered.forEach(rec => {
       [2022, 2023, 2024, 2025].forEach(y => {
         out[y].real += rec.hist[y].real;
         out[y].plan += versionAdj(rec.hist[y].plan);
       });
-      const dv = derived(rec, g);
-      let cumW = 0; for (let i = 0; i <= mi; i++) cumW += rec._weights[i];
-      out[2026].real += dv.real26full * cumW;
-      out[2026].plan += versionAdj(dv.ppto26) * cumW;
-      const prop = (opts.overrides && opts.overrides[rec.id] != null) ? opts.overrides[rec.id] : dv.prop27;
+      // 2026 YTD: valores reales cargados del Excel (no simulados).
+      out[2026].real += rec.hist[2026].real;
+      out[2026].plan += versionAdj(rec.hist[2026].plan);
+      // 2026 FY: presupuesto anual (solo Ppto).
+      out['2026fy'].plan += rec.fy26 || 0;
+      const prop = (opts.overrides && opts.overrides[rec.id] != null) ? opts.overrides[rec.id] : derived(rec, g).prop27;
       out[2027].prop += prop;
     });
     return out;
@@ -382,6 +442,8 @@
       if (cset && !cset.has(rec.comp)) return false;
       if (opts.vps && opts.vps.length && !opts.vps.includes(rec.vp)) return false;
       if (opts.items && opts.items.length && !opts.items.includes(rec.item)) return false;
+      if (opts.tcs && opts.tcs.length && !opts.tcs.includes(rec.tc)) return false;
+      if (opts.aps && opts.aps.length && !opts.aps.includes(rec.ap)) return false;
       return true;
     });
     const out = { MLP: 0, ANT: 0, CEN: 0, CMZ: 0 };
@@ -408,9 +470,10 @@
 
   /* ---------- formato ---------- */
   function fmt(usd, unit, decimals) {
-    const div = unit === 'kUSD' ? 1e3 : 1e6;
+    // unit 'num' = valor crudo (FTE / Nº, sin dividir); 'kUSD' = miles; resto = millones.
+    const div = unit === 'num' ? 1 : unit === 'kUSD' ? 1e3 : 1e6;
     let v = usd / div;
-    const d = decimals != null ? decimals : (unit === 'kUSD' ? 0 : 1);
+    const d = decimals != null ? decimals : (unit === 'num' ? 0 : unit === 'kUSD' ? 0 : 1);
     return v.toLocaleString('es-CL', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
   function fmtPct(x, d) {
@@ -445,13 +508,19 @@
     const vpset = opts.vps && opts.vps.length ? new Set(opts.vps) : null;
     const gers = [], gseen = new Set();
     const items = [], iseen = new Set();
+    const tcs = [], tseen = new Set();   // Tipo Costo (C1/C3/Comercialización)
+    const aps = [], aseen = new Set();   // ¿Aplica? (Sí/No)
     recs.forEach(r => {
       if (!vpset || vpset.has(r.vp)) { if (!gseen.has(r.ger)) { gseen.add(r.ger); gers.push(r.ger); } }
       if (!iseen.has(r.item)) { iseen.add(r.item); items.push(r.item); }
+      if (r.tc && !tseen.has(r.tc)) { tseen.add(r.tc); tcs.push(r.tc); }
+      if (r.ap && !aseen.has(r.ap)) { aseen.add(r.ap); aps.push(r.ap); }
     });
     gers.sort((a, b) => a.localeCompare(b, 'es'));
     items.sort((a, b) => a.localeCompare(b, 'es'));
-    return { gers, items };
+    tcs.sort((a, b) => a.localeCompare(b, 'es'));
+    aps.sort((a, b) => a.localeCompare(b, 'es'));
+    return { gers, items, tcs, aps };
   }
 
   // Resolución de colores del tema: traduce cualquier expresión CSS (var(--x),
@@ -512,7 +581,7 @@
       _vpFullToShort = {};
       for (const k in D.vpNames) _vpFullToShort[D.vpNames[k]] = k;
     }
-    const dict = (window.ADA_DICT && window.ADA_DICT.cecos) || [];
+    const dict = (window.CORP_DICT && window.CORP_DICT.cecos) || [];
     const gerVp = {};
     dict.forEach(c => {
       const nv = ovByCeco[c.c];
@@ -521,12 +590,13 @@
     records.forEach(r => { r.vp = gerVp[r.ger] || r._vp0; });
   }
 
-  window.ADA = {
-    D, records, corpRecords, distRecords, MESES, COMPANIAS, VISTAS, VERSIONES,
+  window.CORP = {
+    D, records, corpRecords, distRecords, dotRecords, MESES, COMPANIAS, VISTAS, VERSIONES,
     buildTree, annualSeries, distribuible, activeRecords, dimsFor, applyVpOverrides, kpiColor, kpiHex, color, theme, resetTheme,
     fmt, fmtPct, dispVP, dispGer, dispItem, applyNameOverrides, baseGer, baseItem,
     recordById: (id) => records[id],
     derived,
     DEF_GROWTH,
+    GER_ALIAS,
   };
 })();
