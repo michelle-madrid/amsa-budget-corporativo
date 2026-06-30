@@ -41,7 +41,7 @@ function BarYears({ series, unit, decimals, showProp }) {
   if (showProp) rows.push({ y: 'Prop 27', prop: series[2027].prop, prop27: true });
   const max = Math.max(1, ...rows.flatMap(r => [r.real || 0, r.plan || 0, r.prop || 0]));
   const [boxRef, boxW] = useBoxWidth(780);
-  const W = Math.max(360, Math.round(boxW / CHART_SCALE)), H = 200, padL = 26, padB = 26, padT = 12;
+  const W = Math.max(360, Math.round(boxW / CHART_SCALE)), H = 150, padL = 26, padB = 24, padT = 10;
   const innerH = H - padB - padT;
   const groupW = (W - padL) / rows.length;
   const div = unit === 'num' ? 1 : unit === 'kUSD' ? 1e3 : 1e6;
@@ -106,7 +106,7 @@ function ComplianceBars({ series, thr, unit }) {
   if (series[2026] && (series[2026].real || series[2026].plan))
     rows.push({ y: '2026 YTD', pct: series[2026].plan ? series[2026].real / series[2026].plan : 0, ytd: true });
   const [boxRef, boxW] = useBoxWidth(480);
-  const W = Math.max(280, Math.round(boxW / CHART_SCALE)), H = 200, padB = 26, padT = 18, padL = 8;
+  const W = Math.max(280, Math.round(boxW / CHART_SCALE)), H = 150, padB = 24, padT = 16, padL = 8;
   const innerH = H - padB - padT;
   const maxPct = Math.max(1.2, ...rows.map(r => r.pct));
   const groupW = (W - padL) / rows.length;

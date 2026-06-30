@@ -244,7 +244,7 @@ function FilterBar(props) {
           onClick={() => setMoreOpen(o => !o)}
           style={{ width: 46, height: 30, boxSizing: 'border-box', padding: 0, position: 'relative',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            background: '#fff', border: '1px solid var(--amsa-teal)', borderTop: 'none', borderRadius: '0 0 3px 3px',
+            background: '#fff', border: '1px solid var(--amsa-teal)', borderRadius: 3,
             cursor: 'pointer', fontSize: 17, fontWeight: 700, lineHeight: 1, color: 'var(--amsa-teal)' }}>
           +{nMore > 0
             ? <span style={{ position: 'absolute', top: -4, right: -4, background: 'var(--amsa-yellow)', color: '#3a2e10', borderRadius: 8, fontSize: 9, fontWeight: 800, padding: '1px 5px' }}>{nMore}</span>

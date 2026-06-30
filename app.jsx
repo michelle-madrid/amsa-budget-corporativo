@@ -710,17 +710,25 @@ function DotacionesView() {
                     { value: 2025, label: '2025' }, { value: 2026, label: '2026 YTD' }, { value: '2026fy', label: '2026 Ppto FY' }];
 
   const T = tree.total;
-  const cump = T.ytdVersion ? T.ytdReal / T.ytdVersion : 0;
-  const dif = T.ytdReal - T.ytdVersion;
-  const cumpCol = A.kpiColor(T.ytdReal, T.ytdVersion, thr);
   const histYears = years.filter(y => typeof y === 'number');
+  // FTE = dotación PROMEDIO, no acumulable: buildTree devuelve la SUMA de los años
+  // seleccionados, así que aquí se promedia. El Real se divide entre los años con
+  // dato real (numéricos); el Ppto entre esos años + el Ppto FY 2026 si está activo.
+  const nReal = Math.max(1, histYears.length);
+  const nVer = Math.max(1, histYears.length + (years.includes('2026fy') ? 1 : 0));
+  const avgR = a => a.ytdReal / nReal;
+  const avgV = a => a.ytdVersion / nVer;
+  const Treal = avgR(T), Tver = avgV(T);
+  const cump = Tver ? Treal / Tver : 0;
+  const dif = Treal - Tver;
+  const cumpCol = A.kpiColor(Treal, Tver, thr);
   const yLbl = [...histYears.map(String), ...(years.includes('2026fy') ? ['2026 Ppto FY'] : [])].join(' + ') || '—';
   const modeLbl = dataMode === 'dot' ? 'Propios + Contratista' : dataMode === 'propios' ? 'Propios' : dataMode === 'contratista' ? 'Contratista' : 'Sin datos';
   const kpis = [
-    { label: 'Dotación Real', value: fmtN(T.ytdReal), unit: 'FTE', sub: yLbl + ' · promedio' },
-    { label: 'Dotación Ppto', value: fmtN(T.ytdVersion), unit: 'FTE', sub: 'Presupuesto' },
+    { label: 'Dotación Real', value: fmtN(Treal), unit: 'FTE', sub: yLbl + ' · promedio' },
+    { label: 'Dotación Ppto', value: fmtN(Tver), unit: 'FTE', sub: 'Presupuesto' },
     { label: 'Desviación', value: (dif > 0 ? '+' : '') + fmtN(dif), unit: 'FTE', color: A.kpiHex(dif > 0 ? 'rojo' : 'azul'),
-      sub: T.ytdVersion ? (dif > 0 ? '+' : '') + A.fmtPct(dif / Math.abs(T.ytdVersion), 1) + ' vs ppto' : '—' },
+      sub: Tver ? (dif > 0 ? '+' : '') + A.fmtPct(dif / Math.abs(Tver), 1) + ' vs ppto' : '—' },
     { label: 'Cumplimiento', value: A.fmtPct(cump, 0), color: A.kpiHex(cumpCol), sub: 'Real / Ppto' },
   ];
 
@@ -729,14 +737,17 @@ function DotacionesView() {
   const expandAll = () => setExpanded(new Set(tree.vpNodes.map(n => n.name)));
   const collapseAll = () => setExpanded(new Set());
   const cap = { fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 9.5, letterSpacing: '.07em', color: '#8a9499', textTransform: 'uppercase', marginBottom: 4 };
-  const th = { textAlign: 'right', padding: '7px 12px', fontSize: 11, fontWeight: 700, color: '#fff', background: 'var(--amsa-teal-deep)', position: 'sticky', top: 0 };
-  const td = { padding: '6px 12px', fontSize: 12.5, borderBottom: '1px solid var(--line-soft)', textAlign: 'right' };
+  const anyFilter = !!(vps.length || gers.length || q.trim());
+  const clearFilters = () => { setVps([]); setGers([]); setQ(''); };
+  // Píldora de "Gerencia filtrada" (mismo look que la selección de fila de la tabla principal).
+  const selPill = { borderRadius: 4, padding: '1px 6px', margin: '0 -6px', background: 'var(--teal-100)', color: 'var(--amsa-teal-deep)', fontWeight: 700, boxShadow: 'inset 0 0 0 1px var(--teal-border)' };
+  // Bloque Real/Ppto/Dif/Cumpl. con las mismas clases que la tabla principal (mtable).
   const cellN = (real, ver) => {
     const d = real - ver, col = A.kpiHex(A.kpiColor(real, ver, thr));
-    return [<td key="r" className="tnum" style={td}>{fmtN(real)}</td>,
-            <td key="p" className="tnum" style={td}>{fmtN(ver)}</td>,
-            <td key="d" className="tnum" style={{ ...td, color: d > 0 ? 'var(--red)' : 'var(--fg-2)' }}>{(d > 0 ? '+' : '') + fmtN(d)}</td>,
-            <td key="c" className="tnum" style={{ ...td, color: col, fontWeight: 700 }}>{ver ? A.fmtPct(real / ver, 0) : '—'}</td>];
+    return [<td key="r" className="real tnum">{fmtN(real)}</td>,
+            <td key="p" className="ver tnum">{fmtN(ver)}</td>,
+            <td key="d" className="dif tnum" style={{ color: d < 0 ? 'var(--ok)' : d > 0 ? 'var(--red)' : 'var(--fg-soft)' }}>{(d > 0 ? '+' : '') + fmtN(d)}</td>,
+            <td key="c" className="pct" style={{ color: col, fontWeight: 700 }}>{ver ? A.fmtPct(real / ver, 0) : '—'}</td>];
   };
 
   return (
@@ -793,19 +804,32 @@ function DotacionesView() {
           <div><h3>Dotación {yLbl}</h3><div className="mt-sub">{modeLbl} · FTE promedio</div></div>
           <div className="toolbar">
             <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar VP / Gerencia…"
-              style={{ height: 30, width: 220, padding: '0 10px', border: '1px solid var(--teal-200)', borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', outline: 'none', marginRight: 6 }} />
-            <button type="button" onClick={() => expanded.size ? collapseAll() : expandAll()}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-sans)', whiteSpace: 'nowrap' }}>
+              style={{ height: 30, width: 220, padding: '0 10px', border: '1px solid var(--teal-200)', borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', outline: 'none' }} />
+            <button type="button" className="btn" onClick={() => expanded.size ? collapseAll() : expandAll()}>
               {expanded.size ? '⤒ Colapsar todo' : '⤓ Expandir todo'}
             </button>
           </div>
         </div>
         <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={{ ...th, textAlign: 'left' }}>VP / Gerencia</th>
-              <th style={th}>Real</th><th style={th}>Ppto</th><th style={th}>Dif</th><th style={th}>Cumpl.</th>
-            </tr></thead>
+          <table className="mtable">
+            <thead>
+              <tr className="grp">
+                <th className="nameblk" rowSpan="2">VP / Gerencia
+                  {anyFilter && (
+                    <span role="button" title="Quitar la búsqueda y los filtros de VP / Gerencia" onClick={clearFilters}
+                      style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 4, background: 'rgba(255,255,255,.18)', color: '#fff',
+                        fontSize: 10.5, fontWeight: 600, cursor: 'pointer', textTransform: 'none', letterSpacing: 'normal', whiteSpace: 'nowrap' }}>
+                      Limpiar ×
+                    </span>
+                  )}
+                </th>
+                <th className="spacer" rowSpan="2"></th>
+                <th colSpan="4">FTE promedio · {yLbl}</th>
+              </tr>
+              <tr className="cols">
+                <th>Real</th><th className="ver">Ppto</th><th>Dif</th><th>Cumpl.</th>
+              </tr>
+            </thead>
             <tbody>
               {tree.vpNodes.map(vp => {
                 const matchVP = !ql || vp.name.toLowerCase().includes(ql);
@@ -814,34 +838,44 @@ function DotacionesView() {
                 const open = expanded.has(vp.name) || (ql && kids.length > 0);
                 return (
                   <React.Fragment key={vp.name}>
-                    <tr style={{ background: 'var(--teal-wash2)', cursor: 'pointer' }} onClick={() => setExpanded(p => { const n = new Set(p); n.has(vp.name) ? n.delete(vp.name) : n.add(vp.name); return n; })}>
-                      <td style={{ padding: '6px 12px', fontSize: 12.5, borderBottom: '1px solid var(--line-soft)', fontWeight: 700, color: 'var(--ink)' }}>
-                        <span style={{ display: 'inline-block', width: 14, color: 'var(--amsa-teal)' }}>{open ? '▾' : '▸'}</span>{vp.name}
+                    <tr className="row-vp" style={{ cursor: 'pointer' }}
+                      onClick={() => setExpanded(p => { const n = new Set(p); n.has(vp.name) ? n.delete(vp.name) : n.add(vp.name); return n; })}>
+                      <td className="name">
+                        <span className="twig ind-1">
+                          <button className="tog" type="button">{open ? '–' : '+'}</button>
+                          <span>{vp.name}</span>
+                        </span>
                       </td>
-                      {cellN(vp.agg.ytdReal, vp.agg.ytdVersion)}
+                      <td className="spacer"></td>
+                      {cellN(avgR(vp.agg), avgV(vp.agg))}
                     </tr>
                     {open && kids.map(g => {
                       const selG = gers.includes(g.name);
                       return (
-                      <tr key={vp.name + '|' + g.name} title="Clic para filtrar por esta Gerencia (toda la pestaña)"
-                        onClick={() => setGers(p => p.includes(g.name) ? p.filter(x => x !== g.name) : [...p, g.name])}
-                        style={{ cursor: 'pointer', background: selG ? 'var(--accent-wash)' : undefined }}>
-                        <td style={{ padding: '5px 12px 5px 30px', fontSize: 12, borderBottom: '1px solid var(--line-soft)', color: selG ? 'var(--accent-ink)' : 'var(--fg-2)', fontWeight: selG ? 700 : undefined }}>
-                          <span style={{ display: 'inline-block', width: 12, color: 'var(--amsa-teal)' }}>{selG ? '✓' : ''}</span>{g.name}
+                      <tr key={vp.name + '|' + g.name} className="row-ger" style={{ cursor: 'pointer' }}
+                        title="Clic para filtrar por esta Gerencia (toda la pestaña)"
+                        onClick={() => setGers(p => p.includes(g.name) ? p.filter(x => x !== g.name) : [...p, g.name])}>
+                        <td className="name">
+                          <span className="twig ind-2">
+                            <span className="tog empty"></span>
+                            <span style={selG ? selPill : undefined}>{g.name}</span>
+                          </span>
                         </td>
-                        {cellN(g.agg.ytdReal, g.agg.ytdVersion)}
+                        <td className="spacer"></td>
+                        {cellN(avgR(g.agg), avgV(g.agg))}
                       </tr>
                       );
                     })}
                   </React.Fragment>
                 );
               })}
-              <tr style={{ background: 'var(--amsa-teal-deep)', color: '#fff', fontWeight: 700 }}>
-                <td style={{ padding: '8px 12px', fontSize: 12.5 }}>Total {modeLbl}</td>
-                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{fmtN(T.ytdReal)}</td>
-                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{fmtN(T.ytdVersion)}</td>
-                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{(T.ytdReal - T.ytdVersion > 0 ? '+' : '') + fmtN(T.ytdReal - T.ytdVersion)}</td>
-                <td className="tnum" style={{ padding: '8px 12px', textAlign: 'right' }}>{T.ytdVersion ? A.fmtPct(cump, 0) : '—'}</td>
+              <tr className="row-total">
+                <td className="name">Total {modeLbl}</td>
+                <td className="spacer"></td>
+                <td className="real tnum">{fmtN(Treal)}</td>
+                <td className="ver tnum">{fmtN(Tver)}</td>
+                <td className="dif tnum">{(dif > 0 ? '+' : '') + fmtN(dif)}</td>
+                <td className="pct">{Tver ? A.fmtPct(cump, 0) : '—'}</td>
               </tr>
             </tbody>
           </table>
