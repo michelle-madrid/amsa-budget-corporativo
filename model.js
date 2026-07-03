@@ -11,12 +11,13 @@
   const D = window.CORP_DATA;
   const DIST = window.DIST_DATA || { records: [] };
   const DOT = window.DOT_DATA || { records: [] };   // Dotaciones (FTE) — Propios/Contratista
+  const FC = window.CORP_FCST26 || null;             // Forecast 5+7 2026 por CECO × CLACO
 
   // ===== Textos editables del dashboard (los edita la herramienta "Editar textos") =====
   const TEXTOS = window.TEXTOS = /*TEXTOS-BEGIN*/{
     "header": {
       "titulo": "Actividad Corporativa",
-      "tituloPlus": "+ Distribuibles",
+      "tituloPlus": "+ Distribuibles Ppto 2027",
       "subtitulo": "Gastos Corporativos por Ítem Relevante, Vicepresidencia y Gerencia"
     },
     "filtros": {
@@ -501,6 +502,50 @@
   function dispVP(n) { return D.vpNames[n] || _allNames[n] || n; }
   function dispGer(n) { return _gerOv[n] || D.gerNames[n] || _allNames[n] || n; }
   function dispItem(n) { return _itemOv[n] || D.itemNames[n] || _allNames[n] || n; }
+  // Código del Ítem Relevante (Cód_Agrupación2 del diccionario CLACO). null si no cruza.
+  function itemCode(n) { return (D.itemCodes && D.itemCodes[n]) || null; }
+
+  // ===== Forecast 5+7 2026 (window.CORP_FCST26) — por CECO × CLACO =====
+  // Estructura: {version,total,cecoMeta:{ceco:{cd,comp,res,vp,ger}},
+  //              clacoMeta:{claco:{cld,ag,item}}, records:[{ceco,claco,val}]}
+  function fcstAvailable() { return !!(FC && FC.records && FC.records.length); }
+  function fcstVersion() { return FC ? FC.version : null; }
+  function fcstResumenValues() {
+    if (!fcstAvailable()) return [];
+    const s = new Set();
+    Object.keys(FC.cecoMeta).forEach(c => s.add(FC.cecoMeta[c].res));
+    return Array.from(s).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  }
+  // resSet: Set de valores Resumen a incluir (null/empty = todos).
+  function _fcstRecs(resSet) {
+    if (!fcstAvailable()) return [];
+    const on = resSet && resSet.size ? resSet : null;
+    if (!on) return FC.records;
+    return FC.records.filter(r => { const m = FC.cecoMeta[r.ceco]; return m && on.has(m.res); });
+  }
+  function fcstTotal(resSet) { return _fcstRecs(resSet).reduce((s, r) => s + r.val, 0); }
+  // Detalle joineado (una fila por CECO×CLACO) para la vista Forecast.
+  function fcstDetail(resSet) {
+    return _fcstRecs(resSet).map(r => {
+      const cm = FC.cecoMeta[r.ceco] || {}, clm = FC.clacoMeta[r.claco] || {};
+      return { ceco: r.ceco, cecoDesc: cm.cd || '', comp: cm.comp || '', resumen: cm.res || '',
+               vp: cm.vp, ger: cm.ger, claco: r.claco, clacoDesc: clm.cld || '',
+               ag: clm.ag || '', item: clm.item || '', val: r.val };
+    });
+  }
+  // Mapa {clave-de-Ítem del tablero: valor} para la columna Fcst de la Tabla Resumen
+  // (cruza Agrupación2 del CLACO ←→ itemCodes inverso). Ags sin ítem en el tablero se omiten.
+  function fcstItemMap(resSet) {
+    const out = {};
+    if (!fcstAvailable()) return out;
+    const ic = D.itemCodes || {}, ag2key = {};
+    Object.keys(ic).forEach(k => { ag2key[String(ic[k])] = k; });
+    _fcstRecs(resSet).forEach(r => {
+      const clm = FC.clacoMeta[r.claco]; const key = clm ? ag2key[String(clm.ag)] : null;
+      if (key != null) out[key] = (out[key] || 0) + r.val;
+    });
+    return out;
+  }
 
   // Opciones de Gerencia (dependen de VP) e Ítem según el modo de datos activo.
   function dimsFor(opts) {
@@ -593,7 +638,8 @@
   window.CORP = {
     D, records, corpRecords, distRecords, dotRecords, MESES, COMPANIAS, VISTAS, VERSIONES,
     buildTree, annualSeries, distribuible, activeRecords, dimsFor, applyVpOverrides, kpiColor, kpiHex, color, theme, resetTheme,
-    fmt, fmtPct, dispVP, dispGer, dispItem, applyNameOverrides, baseGer, baseItem,
+    fmt, fmtPct, dispVP, dispGer, dispItem, itemCode, applyNameOverrides, baseGer, baseItem,
+    fcstAvailable, fcstVersion, fcstResumenValues, fcstTotal, fcstDetail, fcstItemMap,
     recordById: (id) => records[id],
     derived,
     DEF_GROWTH,

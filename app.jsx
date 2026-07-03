@@ -68,6 +68,8 @@ function DictView(props) {
   const [editCeco, setEditCeco] = React.useState(null);
   const [editGer, setEditGer] = React.useState(null);   // ceco de la fila cuya Gerencia se edita
   const [editItem, setEditItem] = React.useState(null); // clave del Ítem que se edita
+  const [openCats, setOpenCats] = React.useState(() => new Set()); // divisiones expandidas (acordeón)
+  const [catSel, setCatSel] = React.useState([]); // filtro por Clasificación del Gasto ([] = todas)
   const ql = q.trim().toLowerCase();
   // Renombrar Gerencia / Ítem: el override va keyed por la clave estable (no por
   // CECO). Si el valor queda vacío o igual al nombre base, se elimina el override.
@@ -92,15 +94,28 @@ function DictView(props) {
     const c = A.GER_ALIAS[raw].ger;
     (aliasByCanon[c] = aliasByCanon[c] || []).push(raw);
   });
-  // Categoría por código: los CECO corporativos empiezan con "1000" (AMSA S.A.);
-  // el resto son de compañías = Distribuibles.
-  const cecoCat = c => (String(c || '').startsWith('1000') ? 'Corporativo' : 'Distribuible');
-  const cecoRows = cecos.map(r => {
+  // División = "Clasificación del Gasto" (campo de CECOS.xlsx, viene en CORP_DICT.cl).
+  // Fallback por código si faltara: 1000… = Corporativo, resto = Distribuible.
+  const cecoCat = r => r.cl || (String(r.c || '').startsWith('1000') ? 'Gastos Centro Corporativo' : 'Gastos Distribuibles');
+  const allRows = cecos.map(r => {
     const vpKey = vpov[r.c] || r.v;
-    return { ceco: r.c, cat: cecoCat(r.c), gerKey: r.g, ger: A.dispGer(r.g), gerOverridden: !!gerOv[r.g], vpKey, vp: A.dispVP(vpKey), origV: r.v, overridden: !!vpov[r.c], aliases: aliasByCanon[r.g] || null, tc: r.tc || '—', ap: r.ap || '—' };
-  }).filter(r => !ql || r.ceco.toLowerCase().includes(ql) || r.ger.toLowerCase().includes(ql) || r.vp.toLowerCase().includes(ql) || (r.aliases && r.aliases.some(n => n.toLowerCase().includes(ql))));
-  // Corporativo primero, Distribuible después (orden estable dentro de cada grupo).
-  const cecoRowsByCat = ['Corporativo', 'Distribuible'].flatMap(cat => cecoRows.filter(r => r.cat === cat));
+    return { ceco: r.c, cat: cecoCat(r), gerKey: r.g, ger: A.dispGer(r.g), gerOverridden: !!gerOv[r.g], vpKey, vp: A.dispVP(vpKey), origV: r.v, overridden: !!vpov[r.c], aliases: aliasByCanon[r.g] || null, tc: r.tc || '—', ap: r.ap || '—' };
+  });
+  // Opciones del filtro por Clasificación del Gasto (todas las divisiones, con su conteo).
+  const catCountAll = {}; allRows.forEach(r => { catCountAll[r.cat] = (catCountAll[r.cat] || 0) + 1; });
+  const catOptions = Array.from(new Set(allRows.map(r => r.cat)))
+    .sort((a, b) => catCountAll[b] - catCountAll[a] || a.localeCompare(b, 'es'))
+    .map(c => ({ value: c, label: `${c} (${catCountAll[c]})` }));
+  const catSet = catSel.length ? new Set(catSel) : null;
+  const cecoRows = allRows.filter(r => (!catSet || catSet.has(r.cat)) &&
+    (!ql || r.ceco.toLowerCase().includes(ql) || r.ger.toLowerCase().includes(ql) || r.vp.toLowerCase().includes(ql) || r.cat.toLowerCase().includes(ql) || (r.aliases && r.aliases.some(n => n.toLowerCase().includes(ql)))));
+  // Agrupa por Clasificación del Gasto; divisiones ordenadas por cantidad de CECOs (desc).
+  const catCount = {}; cecoRows.forEach(r => { catCount[r.cat] = (catCount[r.cat] || 0) + 1; });
+  const cats = Array.from(new Set(cecoRows.map(r => r.cat))).sort((a, b) => catCount[b] - catCount[a] || a.localeCompare(b, 'es'));
+  // Acordeón: colapsado por defecto. Al buscar o filtrar por categoría, se abre todo
+  // para que se vean los resultados. Botones Expandir/Colapsar todo controlan openCats.
+  const effOpen = (ql || catSel.length) ? new Set(cats) : openCats;
+  const toggleCat = c => setOpenCats(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
   const nOver = Object.keys(vpov).length;
   // Catálogo de Ítem Relevante = unión de TODOS los ítems presentes en los
   // datos (corporativo + distribuibles), no solo el catálogo corporativo:
@@ -111,8 +126,8 @@ function DictView(props) {
   (A.corpRecords || []).forEach(r => itemKeySet.add(r.item));
   (A.distRecords || []).forEach(r => itemKeySet.add(r.item));
   const itemRows = Array.from(itemKeySet)
-    .map(k => ({ key: k, name: A.dispItem(k), overridden: !!itemOv[k] }))
-    .filter(r => !ql || r.name.toLowerCase().includes(ql) || r.key.toLowerCase().includes(ql))
+    .map(k => ({ key: k, name: A.dispItem(k), code: A.itemCode(k), overridden: !!itemOv[k] }))
+    .filter(r => !ql || r.name.toLowerCase().includes(ql) || r.key.toLowerCase().includes(ql) || (r.code && String(r.code).toLowerCase().includes(ql)))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const nItemOver = Object.keys(itemOv).length;
   const nGerOver = Object.keys(gerOv).length;
@@ -125,10 +140,28 @@ function DictView(props) {
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, margin: '4px 0 14px' }}>
         <div>
           <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>Diccionario de códigos</h2>
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>CECO → Gerencia (renombrable) y Vicepresidencia (editable) · Ítem Relevante (renombrable)</div>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>CECO → Gerencia (renombrable) y Vicepresidencia (editable) · agrupado por Clasificación del Gasto · Ítem Relevante (renombrable)</div>
         </div>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar CECO, Gerencia, VP o Ítem…"
-          style={{ height: 32, width: 300, padding: '0 12px', border: '1px solid var(--teal-border)', borderRadius: 6, fontSize: 12.5, outline: 'none', fontFamily: 'var(--font-sans)', color: 'var(--ink)' }} />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => setOpenCats(new Set(cats))} style={{ ...iconBtn, color: 'var(--amsa-teal)', fontWeight: 600, fontSize: 11.5 }}>Expandir todo</button>
+          <button onClick={() => setOpenCats(new Set())} style={{ ...iconBtn, color: 'var(--amsa-teal)', fontWeight: 600, fontSize: 11.5 }}>Colapsar todo</button>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar CECO, Gerencia, VP o Ítem…"
+            style={{ height: 32, width: 260, padding: '0 12px', border: '1px solid var(--teal-border)', borderRadius: 6, fontSize: 12.5, outline: 'none', fontFamily: 'var(--font-sans)', color: 'var(--ink)' }} />
+        </div>
+      </div>
+      {/* Filtro por Clasificación del Gasto: chips toggle (on-brand), con conteo. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 12px' }}>
+        {[{ k: null, label: 'Todas', n: allRows.length }].concat(catOptions.map(o => ({ k: o.value, label: o.value, n: catCountAll[o.value] }))).map(c => {
+          const active = c.k === null ? catSel.length === 0 : catSel.includes(c.k);
+          return (
+            <button key={c.k || '__all'} type="button"
+              onClick={() => c.k === null ? setCatSel([]) : setCatSel(s => s.includes(c.k) ? s.filter(x => x !== c.k) : s.concat(c.k))}
+              style={{ border: active ? '1px solid var(--amsa-teal)' : '1px solid var(--teal-border)', background: active ? 'var(--amsa-teal)' : '#fff', color: active ? '#fff' : 'var(--fg-soft)', borderRadius: 14, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-sans)', display: 'inline-flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>
+              {c.label}
+              <span style={{ opacity: .7, fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{c.n}</span>
+            </button>
+          );
+        })}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'start' }}>
         <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
@@ -136,62 +169,69 @@ function DictView(props) {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr><th style={{ ...th, width: 110 }}>CECO</th><th style={th}>Gerencia</th><th style={th}>Vicepresidencia</th><th style={{ ...th, width: 96 }}>Tipo Costo</th><th style={{ ...th, width: 74 }}>¿Aplica?</th></tr></thead>
               <tbody>
-                {cecoRowsByCat.map((r, ri) => (
-                  <React.Fragment key={r.ceco}>
-                  {(ri === 0 || cecoRowsByCat[ri - 1].cat !== r.cat) && (
-                    <tr>
+                {cats.map(cat => {
+                  const open = effOpen.has(cat);
+                  const rowsOfCat = cecoRows.filter(r => r.cat === cat);
+                  return (
+                  <React.Fragment key={cat}>
+                    <tr onClick={() => toggleCat(cat)} style={{ cursor: 'pointer' }}>
                       <td colSpan="5" style={{ padding: '7px 12px', fontSize: 10.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--amsa-teal-deep)', background: 'var(--teal-wash2)', borderTop: '1px solid var(--line-soft)' }}>
-                        {r.cat}{r.cat === 'Distribuible' ? ' (compañías)' : ''}
+                        <span style={{ display: 'inline-block', width: 14, color: 'var(--fg-muted)' }}>{open ? '▾' : '▸'}</span>
+                        {cat} <span style={{ fontWeight: 600, opacity: .7 }}>· {catCount[cat]} CECO{catCount[cat] > 1 ? 's' : ''}</span>
                       </td>
                     </tr>
-                  )}
-                  <tr style={r.overridden ? { background: 'var(--accent-wash)' } : undefined}>
-                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.ceco}</td>
-                    <td style={td}>
-                      {editGer === r.ceco
-                        ? <input autoFocus type="text" defaultValue={r.ger}
-                            onBlur={e => { setGerName(r.gerKey, e.target.value); setEditGer(null); }}
-                            onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditGer(null); }}
-                            style={{ width: '100%', height: 26, border: '1px solid var(--amsa-teal)', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', background: '#fff', padding: '0 6px', boxSizing: 'border-box' }} />
-                        : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            <span style={r.gerOverridden ? { fontWeight: 700, color: 'var(--accent-ink)' } : undefined}>{r.ger}</span>
-                            {r.gerOverridden && <span title={'Original: ' + A.baseGer(r.gerKey)} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
-                            <button title="Renombrar Gerencia" onClick={() => setEditGer(r.ceco)} style={iconBtn}>✎</button>
-                            {r.gerOverridden && <button title="Restablecer nombre" onClick={() => setGerName(r.gerKey, null)} style={iconBtn}>↺</button>}
-                          </span>}
-                    </td>
-                    <td style={td}>
-                      {editCeco === r.ceco
-                        ? <select autoFocus value={r.vpKey}
-                            onChange={e => { setVp(r.ceco, e.target.value, r.origV); setEditCeco(null); }}
-                            onBlur={() => setEditCeco(null)}
-                            style={{ width: '100%', height: 26, border: '1px solid var(--amsa-teal)', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', background: '#fff' }}>
-                            {vpKeys.map(k => <option key={k} value={k}>{A.dispVP(k)}</option>)}
-                          </select>
-                        : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            <span style={r.overridden ? { fontWeight: 700, color: 'var(--accent-ink)' } : undefined}>{r.vp}</span>
-                            {r.overridden && <span title={'Original: ' + A.dispVP(r.origV)} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
-                            <button title="Editar VP" onClick={() => setEditCeco(r.ceco)} style={iconBtn}>✎</button>
-                            {r.overridden && <button title="Restablecer" onClick={() => setVp(r.ceco, null, r.origV)} style={iconBtn}>↺</button>}
-                          </span>}
-                    </td>
-                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums', color: 'var(--fg-2)' }}>{r.tc}</td>
-                    <td style={{ ...td, fontWeight: r.ap === 'No' ? 700 : undefined, color: r.ap === 'No' ? 'var(--red)' : 'var(--fg-2)' }}>{r.ap}</td>
-                  </tr>
-                  {/* Sub-filas: nombres crudos con los que esta Gerencia venía en los archivos (alias unificados). */}
-                  {r.aliases && r.aliases.map(raw => (
-                    <tr key={r.ceco + '|' + raw} style={{ background: 'var(--teal-wash2)' }}>
-                      <td style={{ ...td, borderBottom: '1px solid var(--line-soft)' }}></td>
-                      <td style={{ ...td, paddingLeft: 26, color: 'var(--fg-muted)', fontStyle: 'italic' }}>
-                        <span title="Nombre con el que venía en los archivos (unificado bajo el nombre oficial de arriba)">↳ {raw}</span>
-                      </td>
-                      <td style={td}></td>
-                      <td style={td}></td>
-                      <td style={td}></td>
-                    </tr>
-                  ))}
+                    {open && rowsOfCat.map(r => (
+                      <React.Fragment key={r.ceco}>
+                      <tr style={r.overridden ? { background: 'var(--accent-wash)' } : undefined}>
+                        <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.ceco}</td>
+                        <td style={td}>
+                          {editGer === r.ceco
+                            ? <input autoFocus type="text" defaultValue={r.ger}
+                                onBlur={e => { setGerName(r.gerKey, e.target.value); setEditGer(null); }}
+                                onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditGer(null); }}
+                                style={{ width: '100%', height: 26, border: '1px solid var(--amsa-teal)', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', background: '#fff', padding: '0 6px', boxSizing: 'border-box' }} />
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <span style={r.gerOverridden ? { fontWeight: 700, color: 'var(--accent-ink)' } : undefined}>{r.ger}</span>
+                                {r.gerOverridden && <span title={'Original: ' + A.baseGer(r.gerKey)} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
+                                <button title="Renombrar Gerencia" onClick={() => setEditGer(r.ceco)} style={iconBtn}>✎</button>
+                                {r.gerOverridden && <button title="Restablecer nombre" onClick={() => setGerName(r.gerKey, null)} style={iconBtn}>↺</button>}
+                              </span>}
+                        </td>
+                        <td style={td}>
+                          {editCeco === r.ceco
+                            ? <select autoFocus value={r.vpKey}
+                                onChange={e => { setVp(r.ceco, e.target.value, r.origV); setEditCeco(null); }}
+                                onBlur={() => setEditCeco(null)}
+                                style={{ width: '100%', height: 26, border: '1px solid var(--amsa-teal)', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', background: '#fff' }}>
+                                {vpKeys.map(k => <option key={k} value={k}>{A.dispVP(k)}</option>)}
+                              </select>
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <span style={r.overridden ? { fontWeight: 700, color: 'var(--accent-ink)' } : undefined}>{r.vp}</span>
+                                {r.overridden && <span title={'Original: ' + A.dispVP(r.origV)} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
+                                <button title="Editar VP" onClick={() => setEditCeco(r.ceco)} style={iconBtn}>✎</button>
+                                {r.overridden && <button title="Restablecer" onClick={() => setVp(r.ceco, null, r.origV)} style={iconBtn}>↺</button>}
+                              </span>}
+                        </td>
+                        <td style={{ ...td, fontVariantNumeric: 'tabular-nums', color: 'var(--fg-2)' }}>{r.tc}</td>
+                        <td style={{ ...td, fontWeight: r.ap === 'No' ? 700 : undefined, color: r.ap === 'No' ? 'var(--red)' : 'var(--fg-2)' }}>{r.ap}</td>
+                      </tr>
+                      {/* Sub-filas: nombres crudos con los que esta Gerencia venía en los archivos (alias unificados). */}
+                      {r.aliases && r.aliases.map(raw => (
+                        <tr key={r.ceco + '|' + raw} style={{ background: 'var(--teal-wash2)' }}>
+                          <td style={{ ...td, borderBottom: '1px solid var(--line-soft)' }}></td>
+                          <td style={{ ...td, paddingLeft: 26, color: 'var(--fg-muted)', fontStyle: 'italic' }}>
+                            <span title="Nombre con el que venía en los archivos (unificado bajo el nombre oficial de arriba)">↳ {raw}</span>
+                          </td>
+                          <td style={td}></td>
+                          <td style={td}></td>
+                          <td style={td}></td>
+                        </tr>
+                      ))}
+                      </React.Fragment>
+                    ))}
                   </React.Fragment>
-                ))}
+                  );
+                })}
                 {cecoRows.length === 0 && <tr><td style={td} colSpan="5">Sin resultados</td></tr>}
               </tbody>
             </table>
@@ -204,7 +244,7 @@ function DictView(props) {
         <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ maxHeight: 580, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th}>Ítem Relevante</th></tr></thead>
+              <thead><tr><th style={th}>Ítem Relevante</th><th style={{ ...th, width: 128 }}>Código</th></tr></thead>
               <tbody>
                 {itemRows.map((it, i) => (
                   <tr key={it.key} style={i % 2 ? { background: 'var(--card-alt2)' } : undefined}>
@@ -221,9 +261,10 @@ function DictView(props) {
                             {it.overridden && <button title="Restablecer nombre" onClick={() => setItemName(it.key, null)} style={iconBtn}>↺</button>}
                           </span>}
                     </td>
+                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11, color: it.code ? 'var(--fg-2)' : 'var(--fg-muted)', whiteSpace: 'nowrap' }} title={it.code ? ('Cód_Agrupación2: ' + it.code) : 'Sin código en el diccionario CLACO'}>{it.code || '—'}</td>
                   </tr>
                 ))}
-                {itemRows.length === 0 && <tr><td style={td}>Sin resultados</td></tr>}
+                {itemRows.length === 0 && <tr><td style={td} colSpan="2">Sin resultados</td></tr>}
               </tbody>
             </table>
           </div>
@@ -278,6 +319,8 @@ function ResumenView({ overrides, unit, dec }) {
   const [colsOpen, setColsOpen] = React.useState(false);
   const [expanded, setExpanded] = React.useState(() => new Set());
   const [q, setQ] = React.useState('');
+  const [sortKey, setSortKey] = React.useState(null); // id de columna a ordenar (null = orden natural)
+  const [sortDir, setSortDir] = React.useState('asc'); // 'asc' (menor→mayor) | 'desc'
   const colsRef = React.useRef(null);
   React.useEffect(() => {
     if (!colsOpen) return;
@@ -340,11 +383,12 @@ function ResumenView({ overrides, unit, dec }) {
     sort: { key: 'real', dir: 'desc' }, overrides, growth: A.DEF_GROWTH,
   });
 
-  // Forecast 5+7 2026 por nodo (pendiente; CORP_FCST26 es por Ítem → se reparte por
-  // igual entre los registros de cada Ítem y se suma por nodo). Mientras esté en 0
-  // no afecta nada; cuando se cargue, queda disponible como columna.
+  // Forecast 5+7 2026 por nodo. Fuente: window.CORP_FCST26 (CECO×CLACO) → mapa por
+  // Ítem (Agrupación2) con alcance "Act. Corp. + Distribuibles" (el comparable con
+  // Real/Ppto). El total del Ítem se reparte por igual entre sus registros y se suma
+  // por nodo. El forecast completo (todos los Resumen) vive en la pestaña Forecast.
   (function attachFcst() {
-    const FCST = window.CORP_FCST26 || {};
+    const FCST = A.fcstItemMap(new Set(['Act. Corp. + Distribuibles']));
     const rec = A.recordById;
     const its = [];
     const collect = ns => ns.forEach(n => n.leaf ? n.recIds.forEach(id => its.push(rec(id).item)) : collect(n.children));
@@ -366,6 +410,38 @@ function ResumenView({ overrides, unit, dec }) {
     if (col.kind === 'plan') return yrOf(agg, col.y).ver;
     return 0;
   };
+
+  // Ordenamiento por columna (clic en encabezados). Ordena el árbol recursivamente
+  // (cada nivel por el mismo criterio) antes de aplanarlo, conservando la jerarquía.
+  const colByKey = {}; cols.forEach(c => { colByKey[c.key] = c; });
+  const sortValue = node => {
+    if (!sortKey || sortKey === '__name') return 0;
+    let base = sortKey, kind = 'val';
+    if (sortKey.endsWith('_d')) { base = sortKey.slice(0, -2); kind = 'dif'; }
+    else if (sortKey.endsWith('_p')) { base = sortKey.slice(0, -2); kind = 'pct'; }
+    const c = colByKey[base]; if (!c) return 0;
+    const v = valOf(c, node);
+    if (kind === 'val') return v;
+    const bv = baseCol ? valOf(baseCol, node) : 0;
+    const dif = bv - v;
+    if (kind === 'dif') return dif;
+    return v ? dif / Math.abs(v) : NaN;   // % Dif indefinido si v=0
+  };
+  if (sortKey) {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const byName = (a, b) => String(a.name).localeCompare(String(b.name), 'es') * dir;
+    const byNum = (a, b) => {
+      const va = sortValue(a), vb = sortValue(b);
+      const na = va == null || isNaN(va), nb = vb == null || isNaN(vb);
+      if (na && nb) return 0; if (na) return 1; if (nb) return -1; // indefinidos al final
+      return (va - vb) * dir;
+    };
+    const sorter = sortKey === '__name' ? byName : byNum;
+    const sortRec = ns => { ns.sort(sorter); ns.forEach(n => n.children && n.children.length && sortRec(n.children)); };
+    sortRec(tree.vpNodes);
+  }
+  const clickSort = key => { if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortKey(key); setSortDir('asc'); } };
+  const sortArrow = key => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
   const flat = window.flattenTree(tree, expanded, q, dims);
   const onToggle = key => setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
@@ -554,13 +630,13 @@ function ResumenView({ overrides, unit, dec }) {
             <table className="mtable">
               <thead>
                 <tr className="cols">
-                  <th className="left" style={{ textAlign: 'left' }}>{headerLbl}</th>
+                  <th className="left" onClick={() => clickSort('__name')} title="Ordenar alfabéticamente" style={{ textAlign: 'left', cursor: 'pointer', userSelect: 'none' }}>{headerLbl}{sortArrow('__name')}</th>
                   {cols.map((c, i) => {
                     const isBase = baseCol && c.key === baseCol.key;
-                    const blocks = [<th key={c.key} style={valHdr(isBase)}>{c.label}{isBase ? ' (base)' : ''}</th>];
+                    const blocks = [<th key={c.key} onClick={() => clickSort(c.key)} title="Ordenar por esta columna (clic: menor→mayor, otra vez: mayor→menor)" style={{ ...valHdr(isBase), cursor: 'pointer', userSelect: 'none' }}>{c.label}{isBase ? ' (base)' : ''}{sortArrow(c.key)}</th>];
                     if (!isBase && showDif) {
-                      blocks.push(<th key={c.key + '_d'} style={{ background: 'var(--amsa-teal-deep)', color: '#fff' }}>Dif</th>);
-                      blocks.push(<th key={c.key + '_p'} style={{ background: 'var(--amsa-teal-deep)', color: '#fff' }}>% Dif</th>);
+                      blocks.push(<th key={c.key + '_d'} onClick={() => clickSort(c.key + '_d')} style={{ background: 'var(--amsa-teal-deep)', color: '#fff', cursor: 'pointer', userSelect: 'none' }}>Dif{sortArrow(c.key + '_d')}</th>);
+                      blocks.push(<th key={c.key + '_p'} onClick={() => clickSort(c.key + '_p')} style={{ background: 'var(--amsa-teal-deep)', color: '#fff', cursor: 'pointer', userSelect: 'none' }}>% Dif{sortArrow(c.key + '_p')}</th>);
                     }
                     return blocks;
                   })}
@@ -583,8 +659,8 @@ function ResumenView({ overrides, unit, dec }) {
           )}
         </div>
         <div className="note" style={{ padding: '8px 14px 12px' }}>
-          Elige Datos, filtros (VP / Gerencia / Ítem), estructura y los períodos a comparar. La 1ª columna es la base; «Dif» = base − período, «% Dif» = Dif / período.
-          Ppto 2027 = Propuesta 2027 (editable en el Dashboard) · Forecast 5+7 2026: pendiente de carga.
+          Elige Datos, filtros (VP / Gerencia / Ítem), estructura y los períodos a comparar. La 1ª columna es la base; «Dif» = base − período, «% Dif» = Dif / período. Clic en un encabezado para ordenar (menor→mayor; otra vez, mayor→menor).
+          Ppto 2027 = Propuesta 2027 (editable en el Dashboard) · Fcst 5+7 2026 = Forecast (alcance «Act. Corp. + Distribuibles»); el detalle completo por CECO y CLACO está en la pestaña Forecast.
         </div>
       </div>
     </div>
@@ -885,6 +961,155 @@ function DotacionesView() {
   );
 }
 
+/* ---------- Pestaña Forecast 5+7 2026: por CECO × CLACO, con filtro Resumen ---------- */
+function ForecastView({ unit, dec }) {
+  const A = window.CORP;
+  const MS = window.MultiSelect;
+  const fmtN = v => A.fmt(v, unit, dec);
+  const [resSel, setResSel] = React.useState([]);   // [] = todos los Resumen
+  const [group, setGroup] = React.useState('ceco'); // ceco | vp | item | comp | resumen
+  const [q, setQ] = React.useState('');
+  const [expanded, setExpanded] = React.useState(() => new Set());
+
+  if (!A.fcstAvailable())
+    return <div className="panel" style={{ padding: 20, color: 'var(--fg-muted)' }}>No hay Forecast cargado (window.CORP_FCST26).</div>;
+
+  const resValues = A.fcstResumenValues();
+  const resOpts = resValues.map(v => ({ value: v, label: v }));
+  const rows0 = A.fcstDetail(new Set(resSel));
+  const ql = q.trim().toLowerCase();
+  const rows = !ql ? rows0 : rows0.filter(r =>
+    (r.ceco && r.ceco.toLowerCase().includes(ql)) || (r.cecoDesc && r.cecoDesc.toLowerCase().includes(ql)) ||
+    String(r.claco).includes(ql) || (r.clacoDesc && r.clacoDesc.toLowerCase().includes(ql)) ||
+    (r.item && r.item.toLowerCase().includes(ql)) || (r.vp && String(r.vp).toLowerCase().includes(ql)) ||
+    (r.ger && String(r.ger).toLowerCase().includes(ql)));
+
+  const total = rows.reduce((s, r) => s + r.val, 0);
+  const nCeco = new Set(rows.map(r => r.ceco)).size;
+  const nClaco = new Set(rows.map(r => r.claco)).size;
+  const nItem = new Set(rows.map(r => r.item)).size;
+  const nVp = new Set(rows.map(r => r.vp)).size;
+
+  const GKEYS = { ceco: r => r.ceco, vp: r => r.vp, item: r => r.item, comp: r => r.comp, resumen: r => r.resumen };
+  const GLBL = { ceco: 'CECO', vp: 'Vicepresidencia', item: 'Ítem Relevante', comp: 'Compañía', resumen: 'Resumen (alcance)' };
+  const keyf = GKEYS[group];
+  const groups = {};
+  rows.forEach(r => { const k = keyf(r) == null ? '—' : keyf(r); (groups[k] = groups[k] || { val: 0, rows: [] }).val += r.val; groups[k].rows.push(r); });
+  const glabel = k => {
+    if (group === 'ceco') { const a = groups[k].rows[0]; return k + (a.cecoDesc ? ' · ' + a.cecoDesc : ''); }
+    if (group === 'vp') return A.dispVP(k);
+    return String(k);
+  };
+  const gArr = Object.keys(groups).map(k => ({ k, val: groups[k].val, rows: groups[k].rows })).sort((a, b) => b.val - a.val);
+  const maxV = gArr.length ? Math.max(...gArr.map(g => Math.abs(g.val))) : 1;
+  const toggle = k => setExpanded(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+
+  const th = { textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 700, letterSpacing: '.03em', color: '#fff', background: 'var(--amsa-teal-deep)', position: 'sticky', top: 0, zIndex: 1 };
+  const thn = { ...th, textAlign: 'right' };
+  const td = { padding: '6px 12px', fontSize: 12.5, borderBottom: '1px solid var(--line-soft)', color: 'var(--ink)' };
+  const tdn = { ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+  const kpi = { flex: 1, background: 'var(--panel)', border: '1px solid var(--line-soft)', borderRadius: 10, padding: '10px 14px' };
+  const klbl = { fontSize: 11, color: 'var(--fg-muted)', fontWeight: 600 };
+  const kval = { fontSize: 20, fontWeight: 800, color: 'var(--ink)', fontFamily: 'var(--font-disp)', marginTop: 2 };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, margin: '4px 0 14px', flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>Forecast 5+7 2026</h2>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Proyección anual 2026 por CECO y CLACO {A.fcstVersion() ? '· ' + A.fcstVersion() : ''} · filtrable por Resumen del CECO</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 220 }}>
+            <MS options={resOpts} selected={resSel} onChange={setResSel} placeholder="Resumen: Todos" searchable />
+          </div>
+          <select value={group} onChange={e => { setGroup(e.target.value); setExpanded(new Set()); }}
+            style={{ height: 32, padding: '0 10px', border: '1px solid var(--teal-border)', borderRadius: 6, fontSize: 12.5, color: 'var(--ink)', background: '#fff', fontFamily: 'var(--font-sans)' }}>
+            {Object.keys(GLBL).map(g => <option key={g} value={g}>Agrupar por: {GLBL[g]}</option>)}
+          </select>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar CECO, CLACO, Ítem…"
+            style={{ height: 32, width: 240, padding: '0 12px', border: '1px solid var(--teal-border)', borderRadius: 6, fontSize: 12.5, outline: 'none', fontFamily: 'var(--font-sans)', color: 'var(--ink)' }} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={kpi}><div style={klbl}>Forecast 2026</div><div style={kval}>{fmtN(total)}</div></div>
+        <div style={kpi}><div style={klbl}>CECOs</div><div style={kval}>{nCeco}</div></div>
+        <div style={kpi}><div style={klbl}>CLACOs</div><div style={kval}>{nClaco}</div></div>
+        <div style={kpi}><div style={klbl}>Ítems</div><div style={kval}>{nItem}</div></div>
+        <div style={kpi}><div style={klbl}>Vicepresidencias</div><div style={kval}>{nVp}</div></div>
+      </div>
+
+      <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ maxHeight: 620, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ ...th, width: 30 }}></th>
+              <th style={th}>{GLBL[group]}</th>
+              <th style={{ ...thn, width: 140 }}>Forecast 2026</th>
+              <th style={{ ...thn, width: 70 }}>%</th>
+              <th style={{ ...th, width: 180 }}></th>
+            </tr></thead>
+            <tbody>
+              {gArr.map(g => {
+                const open = expanded.has(g.k);
+                const det = g.rows.slice().sort((a, b) => b.val - a.val);
+                const cap = 400;
+                return (
+                  <React.Fragment key={g.k}>
+                    <tr onClick={() => toggle(g.k)} style={{ cursor: 'pointer', background: open ? 'var(--teal-wash2)' : undefined }}>
+                      <td style={{ ...td, textAlign: 'center', color: 'var(--fg-muted)' }}>{open ? '▾' : '▸'}</td>
+                      <td style={{ ...td, fontWeight: 600 }}>{glabel(g.k)}</td>
+                      <td style={{ ...tdn, fontWeight: 700 }}>{fmtN(g.val)}</td>
+                      <td style={tdn}>{total ? (g.val / total * 100).toFixed(1) + '%' : '—'}</td>
+                      <td style={td}><div style={{ height: 8, borderRadius: 4, background: 'var(--amsa-teal)', width: Math.max(2, Math.abs(g.val) / maxV * 160) + 'px', opacity: .85 }}></div></td>
+                    </tr>
+                    {open && (
+                      <tr><td></td><td colSpan="4" style={{ padding: 0, background: 'var(--card-alt2)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead><tr>
+                            <th style={{ ...th, background: 'var(--amsa-teal)', fontSize: 10, width: 110 }}>CECO</th>
+                            <th style={{ ...th, background: 'var(--amsa-teal)', fontSize: 10 }}>Desc. CECO</th>
+                            <th style={{ ...th, background: 'var(--amsa-teal)', fontSize: 10, width: 90 }}>CLACO</th>
+                            <th style={{ ...th, background: 'var(--amsa-teal)', fontSize: 10 }}>Ítem / Desc. CLACO</th>
+                            <th style={{ ...thn, background: 'var(--amsa-teal)', fontSize: 10, width: 130 }}>Forecast 2026</th>
+                          </tr></thead>
+                          <tbody>
+                            {det.slice(0, cap).map((r, i) => (
+                              <tr key={r.ceco + '|' + r.claco + i}>
+                                <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{r.ceco}</td>
+                                <td style={{ ...td, color: 'var(--fg-2)' }}>{r.cecoDesc}</td>
+                                <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{r.claco}</td>
+                                <td style={td}><span>{r.item}</span>{r.clacoDesc && r.clacoDesc !== r.item ? <span style={{ color: 'var(--fg-muted)' }}> · {r.clacoDesc}</span> : null}</td>
+                                <td style={tdn}>{fmtN(r.val)}</td>
+                              </tr>
+                            ))}
+                            {det.length > cap && <tr><td colSpan="5" style={{ ...td, color: 'var(--fg-muted)', fontStyle: 'italic' }}>… {det.length - cap} filas más (afina con el buscador)</td></tr>}
+                          </tbody>
+                        </table>
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+              {gArr.length === 0 && <tr><td colSpan="5" style={td}>Sin resultados</td></tr>}
+              <tr style={{ background: 'var(--teal-wash2)' }}>
+                <td style={td}></td>
+                <td style={{ ...td, fontWeight: 800 }}>Total{resSel.length ? ' (filtrado)' : ''}</td>
+                <td style={{ ...tdn, fontWeight: 800 }}>{fmtN(total)}</td>
+                <td style={tdn}>100%</td><td style={td}></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="note" style={{ padding: '8px 14px 12px', fontSize: 11, color: 'var(--fg-muted)' }}>
+          Forecast 5+7 (versión {A.fcstVersion() || '—'}): TODOS los CECOs. El filtro «Resumen» corresponde al campo de CECOS.xlsx (Act. Corp. + Distribuibles / Proyectos / Movimiento Financiero / Servicios Generales No Operacionales / sin clasificar). Los CECOs fuera de CECOS.xlsx quedan como «(sin clasificar)». Ítem derivado del CLACO vía Cód_Agrupación2.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const A = window.CORP;
   const TX = window.TEXTOS;
@@ -1126,7 +1351,7 @@ function App() {
       cards.push({
         label: 'Propuesta 2027', value: A.fmt(prop, unit, dec), unit, status: 'amarillo', dot: 'amarillo',
         trend: (dP > 0 ? '+' : '') + A.fmtPct(dP, 1), trendDir: dP > 0 ? 'up' : 'down',
-        sub: `vs promedio ${periodLbl}`,
+        sub: `vs promedio real`,
       });
     }
     return cards;
@@ -1208,7 +1433,7 @@ function App() {
 
       <div className="app-wrap">
         <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '2px solid var(--teal-100)' }}>
-          {[['dashboard', 'Gastos Corporativos'], ['resumen', 'Tabla Resumen Gastos'], ['dotaciones', 'Dotaciones AMSA (FTE)'], ['dict', 'Diccionario (CECO · Ítem)']].map(([id, lbl]) => (
+          {[['dashboard', 'Gastos Corporativos'], ['resumen', 'Tabla Resumen Gastos'], ['forecast', 'Forecast 5+7 2026'], ['dotaciones', 'Dotaciones AMSA (FTE)'], ['dict', 'Diccionario (CECO · Ítem)']].map(([id, lbl]) => (
             <button key={id} type="button" onClick={() => setPage(id)} style={{
               border: 0, background: 'transparent', cursor: 'pointer', padding: '8px 16px',
               fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 13, marginBottom: -2,
@@ -1232,6 +1457,7 @@ function App() {
         </div>
         {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} />
          : page === 'dotaciones' ? <DotacionesView />
+         : page === 'forecast' ? <ForecastView unit={unit} dec={dec} />
          : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} />
          : <React.Fragment>
         <FilterBar st={st} set={set} gerOptions={dims.gers} itemOptions={dims.items} tcOptions={dims.tcs} apOptions={dims.aps} />

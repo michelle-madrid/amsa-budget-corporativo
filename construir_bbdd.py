@@ -31,6 +31,8 @@ import pandas as pd
 # (mapas VP↔Gerencia, normalización de celdas y los helpers que inyectan el
 #  data.js dentro del HTML). Importarlo NO abre la interfaz gráfica.
 import actualizar_dashboard as ad
+import nombres_claco as nc   # nombres oficiales de Ítem Relevante desde el diccionario CLACO
+import forecast as fc        # Forecast 5+7 2026 por CECO × CLACO (window.CORP_FCST26)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UP = os.path.join(HERE, "uploads")
@@ -40,6 +42,7 @@ CORP_FILE = os.path.join(UP, "Gastos Act Corpor histórico 2026 FY.xlsx")
 DIST_FULL = os.path.join(UP, "20260526 DISTRIBUIBLES_CIAS_2022_2025 full.xlsx")
 DIST_2026 = os.path.join(UP, "20260526 DISTRIBUIBLES_CIAS_2026 FY.xlsx")
 CECOS_FILE = os.path.join(UP, "CECOS.xlsx")   # diccionario por código (VP/Gerencia/Tipo Costo/¿Aplica?)
+CLACOS_FILE = os.path.join(UP, "CLACOS.xlsx") # diccionario CLACO (Ítem Relevante: Nombre oficial + Cód_Agrupación2)
 DOT_FILE = os.path.join(UP, "Dotaciones Histórico AMSA.xlsx")  # dotaciones (FTE) por VP/Gerencia
 PARQUET_DOT = os.path.join(HERE, "dotaciones.parquet")
 
@@ -100,12 +103,13 @@ def _dic_cecos(cola):
         return []
 
 
-def actualizar_diccionario(cola, cecos, vpNames):
+def actualizar_diccionario(cola, cecos, vpNames, clas=None):
     """Actualiza la pestaña Diccionario (CORP_DICT) contra CECOS.xlsx:
-      · sincroniza el VP de los códigos existentes (si el VP real difiere),
+      · sincroniza el VP y la Clasificación del Gasto (división) de los existentes,
       · AGREGA los códigos que faltan (p. ej. los distribuibles 1001AD…),
-        con su Gerencia (Desc. CECO) y VP.
+        con su Gerencia (Desc. CECO), VP y Clasificación del Gasto.
     El VP se guarda con el nombre largo (consistente con dispVP del tablero)."""
+    clas = clas or {}
     tag = "window.CORP_DICT={cecos:"
     i = cola.find(tag)
     if i == -1:
@@ -122,13 +126,14 @@ def actualizar_diccionario(cola, cecos, vpNames):
             vp, ger, tc, ap = cecos[code]
             c["tc"] = tc or None     # Tipo Costo (C1/C3/Comercialización)
             c["ap"] = ap or None     # ¿Aplica? (Sí/No)
+            c["cl"] = clas.get(code) or None   # Clasificación del Gasto (división en el Diccionario)
             if short_of(ad._txt(c.get("v"))) != vp:
                 c["v"] = vpNames.get(vp, vp); nsync += 1
     nadd = 0
     for code in sorted(cecos):
         if code not in present:
             vp, ger, tc, ap = cecos[code]
-            arr.append({"c": code, "g": ger, "v": vpNames.get(vp, vp), "tc": tc or None, "ap": ap or None}); nadd += 1
+            arr.append({"c": code, "g": ger, "v": vpNames.get(vp, vp), "tc": tc or None, "ap": ap or None, "cl": clas.get(code) or None}); nadd += 1
     nueva = (cola[:j] + json.dumps(arr, ensure_ascii=False, separators=(",", ":"))
              + cola[j + end:])
     return nueva, (nsync, nadd)
@@ -212,6 +217,26 @@ def cecos_por_codigo(vpNames):
     return out
 
 
+def clasificacion_por_codigo():
+    """{código CECO: 'Clasificación del Gasto'} desde CECOS.xlsx 'CECOS Corporativo'.
+    Es la 'división' que usa la pestaña Diccionario para agrupar."""
+    wb = openpyxl.load_workbook(CECOS_FILE, data_only=True, read_only=True)
+    sheet = next((s for s in wb.sheetnames if "orporativo" in s), wb.sheetnames[-1])
+    grid = [list(r) for r in wb[sheet].iter_rows(values_only=True)]
+    wb.close()
+    h = grid[0]
+    cC = next((i for i, c in enumerate(h) if ad._txt(c) == "CECO"), None)
+    clC = next((i for i, c in enumerate(h) if "Clasificaci" in ad._txt(c) and "Gasto" in ad._txt(c)), None)
+    out = {}
+    if cC is None or clC is None:
+        return out
+    for r in grid[1:]:
+        code = ad._txt(r[cC]) if cC < len(r) else ""
+        if code:
+            out[code] = ad._txt(r[clC]) if clC < len(r) else ""
+    return out
+
+
 def leer_dist(dist_dic=None):
     """Distribuible: valores 2022-2025 de la planilla 'full' y 2026 (meses ene–may +
     total anual) de la planilla 'FY'. La VP y la Gerencia se asignan por CÓDIGO CECO
@@ -247,6 +272,7 @@ def leer_dist(dist_dic=None):
             code = ad._txt(row[codeC]) if codeC is not None and codeC < len(row) else ""
             if not it or not code:
                 continue
+            it = nc.corregir_item_dist(it)   # ítems mal etiquetados (nombre de CECO) → ítem correcto
             vp, ger, tc, ap = vg(code)
             g = lambda i: ad._num(row[i]) if i is not None and i < len(row) else None
             for y in YEARS_HIST:
@@ -438,7 +464,7 @@ def registros_desde_parquet(df, src):
     return recs
 
 
-def construir_data_js(df, maps, cola, dot_records=None):
+def construir_data_js(df, maps, cola, dot_records=None, fcst=None):
     itemNames, vpNames, gerNames = maps
     corp = registros_desde_parquet(df, "corp")
     dist = registros_desde_parquet(df, "dist")
@@ -447,10 +473,19 @@ def construir_data_js(df, maps, cola, dot_records=None):
     items = ad._uniq(r["item"] for r in corp)
     ada = {"records": corp, "vps": vps, "gers": gers, "items": items,
            "itemNames": itemNames, "vpNames": vpNames, "gerNames": gerNames}
+    # Código (Cód_Agrupación2) por Ítem Relevante desde el diccionario CLACO. Universo
+    # de claves = ítems corporativos + ítems de distribuibles (los que ve el panel).
+    try:
+        _keys = set(items) | {r["item"] for r in corp} | {r["item"] for r in dist}
+        ada["itemCodes"] = nc.construir_itemcodes(_keys, itemNames, CLACOS_FILE)
+        log(f"  Ítem Relevante (CLACO): {len(ada['itemCodes'])}/{len(_keys)} ítems con código.")
+    except SystemExit as e:
+        log(f"  AVISO CLACO itemCodes: {e} — se omite itemCodes.")
     j = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))
+    fcst_block = ("\nwindow.CORP_FCST26 = " + j(fcst) + ";") if fcst else ""
     return ("window.CORP_DATA = " + j(ada) + ";\n" +
             "window.DIST_DATA = " + j({"records": dist}) + ";\n" +
-            "window.DOT_DATA = " + j({"records": dot_records or []}) + ";" + cola), corp, dist
+            "window.DOT_DATA = " + j({"records": dot_records or []}) + ";" + fcst_block + cola), corp, dist
 
 
 # ===========================================================================
@@ -503,12 +538,20 @@ def main():
     with open(HTML_PATH, "r", encoding="utf-8", newline="") as f:
         html = f.read()
     maps = ad.maps_actuales(html)            # (itemNames, vpNames, gerNames)
+    # Ítem Relevante: re-sincroniza los nombres con el "Nombre oficial" del
+    # diccionario CLACO (uploads/CLACOS.xlsx), cruzando por Nombre SAP.
+    try:
+        _item_ov, _cambios = nc.aplicar_itemnames(maps[0], nc.mapa_oficial(CLACOS_FILE))
+        maps = (_item_ov, maps[1], maps[2])
+        log(f"  Ítem Relevante (CLACO): {len(_cambios)} nombre(s) oficial(es) aplicado(s).")
+    except SystemExit as e:
+        log(f"  AVISO CLACO: {e} — se conservan los nombres actuales.")
     cola = ad.cola_actual(html)              # window.CORP_DICT (CECO→Gerencia→VP) + CORP_LOGO
     cecos = cecos_por_codigo(maps[1])        # ÚNICA fuente: CECOS.xlsx (VP/Gerencia/Tipo Costo/¿Aplica?)
     log(f"  CECOS.xlsx: {len(cecos)} códigos.")
     # Unifica TODO a CECOS: actualiza la pestaña Diccionario (sincroniza VP + agrega
     # los códigos que falten, p. ej. distribuibles) y mapea corp por código.
-    cola, (nsync, nadd) = actualizar_diccionario(cola, cecos, maps[1])
+    cola, (nsync, nadd) = actualizar_diccionario(cola, cecos, maps[1], clasificacion_por_codigo())
     log(f"  Diccionario (pestaña): {nsync} VP sincronizadas · {nadd} códigos agregados.")
     dic = {code: vg[0] for code, vg in cecos.items()}   # código → VP corta (CECOS)
     df, orphans = construir_parquet(dic, cecos)
@@ -527,7 +570,16 @@ def main():
         pd.DataFrame(dot_tidy, columns=["src", "vp", "ger", "year", "period", "real", "plan"]) \
             .to_parquet(PARQUET_DOT, index=False)
         log(f"  Dotaciones escritas: {os.path.basename(PARQUET_DOT)} ({len(dot_tidy)} filas)")
-    data_js, corp, dist = construir_data_js(df, maps, cola, dot_records)
+    # Forecast 5+7 2026 por CECO × CLACO (window.CORP_FCST26). VP/Ger/Resumen por CECO
+    # (CECOS.xlsx) e Ítem por CLACO (diccionario CLACO). Carga TODOS los CECOs.
+    fcst = None
+    try:
+        fcst = fc.cargar_forecast(cecos, cecos_path=CECOS_FILE, clacos_path=CLACOS_FILE)
+        log(f"  Forecast 5+7 ({fcst['version']}): {fcst['total']/1e6:,.2f} MM · "
+            f"{len(fcst['records'])} regs CECO×CLACO · {len(fcst['cecoMeta'])} CECOs.")
+    except SystemExit as e:
+        log(f"  AVISO Forecast: {e} — se omite window.CORP_FCST26.")
+    data_js, corp, dist = construir_data_js(df, maps, cola, dot_records, fcst)
     log(f"  Registros: {len(corp)} corp · {len(dist)} dist · {len(dot_records)} dotaciones.")
     regenerar_html(data_js)
     log("\n✓ LISTO.")

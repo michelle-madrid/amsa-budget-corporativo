@@ -126,10 +126,10 @@ button{font-family:inherit;cursor:pointer;}
 .kcard .klbl{font-family:var(--font-disp);font-weight:600;font-size:11px;color:var(--fg-4);letter-spacing:.02em;text-transform:uppercase;}
 .kcard .kval{font-family:var(--font-disp);font-weight:700;font-size:26px;color:var(--ink);margin-top:6px;line-height:1;}
 .kcard .kval .u{font-size:13px;color:var(--fg-4);font-weight:600;margin-left:4px;}
-.kcard .ksub{font-size:11.5px;color:var(--fg-3);margin-top:7px;display:flex;align-items:center;gap:6px;}
+.kcard .ksub{font-size:11.5px;color:var(--fg-3);margin-top:7px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .kcard .strip{position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--amsa-teal);}
 .kcard.rojo .strip{background:var(--red);} .kcard.amarillo .strip{background:var(--yellow);} .kcard.azul .strip{background:var(--blue);}
-.trend{font-weight:700;}
+.trend{font-weight:700;white-space:nowrap;}
 .trend.up{color:var(--red);} .trend.down{color:var(--amsa-teal);} .trend.flat{color:var(--yellow);}
 
 /* ---------------- panels / charts ---------------- */
