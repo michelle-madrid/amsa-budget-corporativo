@@ -1,0 +1,13 @@
+CARPETA DE DATOS DEL NUEVO DASHBOARD (v2)
+=========================================
+
+Deja AQUÍ los Excel de la NUEVA estructura.
+
+- Esta carpeta (v2/uploads) es SOLO para la data del dashboard nuevo (v2).
+- La data y el dashboard antiguos están en la carpeta "v1_antiguo" (no se tocan).
+- Dotaciones: se mantiene igual. Ya dejé aquí una copia de
+  "Dotaciones Histórico AMSA.xlsx" (idéntica a la del v1). Si tienes una
+  versión nueva de dotaciones, reemplázala aquí.
+
+Cuando dejes los archivos, avísame y creo el ÚNICO script de tratamiento
+de datos (v2/construir_v2.py) que regenera todo el dashboard nuevo de cero.

@@ -1,0 +1,74 @@
+==========================================================
+  CÓMO CAMBIAR LOS COLORES DEL DASHBOARD
+==========================================================
+
+Hay DOS formas. La más fácil es el panel dentro del dashboard.
+
+----------------------------------------------------------
+OPCIÓN A — Panel de colores (dentro del dashboard) [FÁCIL]
+----------------------------------------------------------
+1) Abre el HTML en el navegador (doble clic).
+
+2) Abajo a la derecha verás un botón discreto:  ✏️ Modo Edición
+   Haz clic para activarlo. Recién entonces aparece el botón
+   🎨 Colores (así un usuario normal no lo ve por accidente).
+   Haz clic en 🎨 Colores para abrir el panel.
+
+   * Para ocultar todo otra vez, vuelve a hacer clic en
+     "Modo Edición".
+
+3) Toca el cuadrito de color de cualquier fila (Principal,
+   Amarillo, etc.) y elige el color. El dashboard se recolorea
+   AL INSTANTE: tablas, gráficas, KPIs y donut.
+
+4) Los cambios quedan guardados EN ESTE EQUIPO (en el navegador),
+   así que se conservan aunque cierres y vuelvas a abrir.
+
+   * Botón "Restablecer": vuelve a los colores originales.
+
+5) ¿Quieres que esos colores los vean TODOS (en cualquier
+   computador, no solo el tuyo)? Haz clic en "Copiar bloque"
+   y sigue la Opción B (pegar en el archivo).
+
+----------------------------------------------------------
+OPCIÓN B — Dejar los colores FIJOS para todos (en el archivo)
+----------------------------------------------------------
+Esto graba los colores dentro del propio archivo HTML, para que
+cualquiera que lo abra los vea (no depende del navegador).
+
+1) Haz una copia de respaldo del HTML por si acaso.
+
+2) En el panel de colores (Opción A), ajusta los colores que
+   quieras y haz clic en "Copiar bloque".
+
+3) Abre "Dashboard Actividad Corporativa.html" con el Bloc de
+   notas (clic derecho > Abrir con > Bloc de notas).
+
+4) Edición > Buscar... y busca:   <style id=ada-tema
+   Selecciona TODO ese bloque, desde  <style id=ada-tema>  hasta
+   su  </style>  (es una sola línea larga) y pégale encima lo que
+   copiaste en el paso 2.
+
+5) Guarda (Ctrl+S). Listo: esos colores quedan fijos para todos.
+
+   (Si prefieres, en vez de copiar/pegar puedes cambiar a mano los
+    códigos #rrggbb que ves dentro de ese bloque. No borres los
+    ":", ni " !important;", ni el ";".)
+
+----------------------------------------------------------
+COLORES PRINCIPALES
+----------------------------------------------------------
+  Principal (teal)   Pestañas activas, barras, acentos
+  Teal oscuro        Encabezados de tabla, barra "Real"
+  Teal claro         Barra "Presupuesto"
+  Amarillo / Rojo    Marca corporativa (Propuesta 2027, etc.)
+  Semáforo           Verde / Amarillo / Rojo de cumplimiento
+  Texto / Fondos     Color de texto, fondo de página y tarjetas
+
+Los demás tonos se ajustan SOLOS al cambiar el teal o el amarillo.
+
+----------------------------------------------------------
+NOTAS
+----------------------------------------------------------
+- Necesitas un navegador moderno (Edge o Chrome recientes).
+- Si algo se ve raro, usa "Restablecer" o restaura tu respaldo.

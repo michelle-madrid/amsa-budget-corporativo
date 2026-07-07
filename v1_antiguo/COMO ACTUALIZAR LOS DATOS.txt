@@ -1,0 +1,37 @@
+CÓMO ACTUALIZAR LOS DATOS DEL DASHBOARD
+=======================================
+
+Necesitas (una sola vez): Python instalado. NO necesitas Excel ni internet.
+
+PASOS
+-----
+1. Deja los Excel actualizados a mano (de preferencia en la carpeta "uploads"):
+   - El corporativo "Gastos Act Corpor histórico ... (original).xlsx"
+     (con la hoja "Act Corpo VP+Gerencia+items (2)").
+   - El de distribuibles (con las pestañas MLP, ANT, CEN, CMZ).
+   IMPORTANTE: deben tener la MISMA estructura (hojas y columnas) que los actuales.
+
+2. Doble clic en  "Actualizar Dashboard.bat".
+   Se abre una ventana.
+
+3. En la ventana:
+   - Verifica/elige el "Excel Corporativo (BBDD)".
+   - Verifica/elige el "Excel Distribuibles".
+   - (El HTML a actualizar ya viene seleccionado).
+   - Clic en "Actualizar dashboard".
+
+4. Listo: se actualiza "Dashboard Actividad Corporativa.html" y se genera
+   "Dashboard Actividad Corporativa.zip" para enviar.
+   (Se guarda un respaldo del HTML anterior con extensión .bak)
+
+QUÉ HACE POR DENTRO
+-------------------
+Lee los Excel, regenera los datos (corporativo + distribuibles, con el diccionario
+de Vicepresidencias) conservando los nombres largos, y los reinyecta comprimidos
+dentro del HTML autocontenido. No cambia nada del diseño ni de la lógica.
+
+SI ALGO FALLA
+-------------
+- "No se encontró Python": instala Python desde python.org (marca "Add to PATH").
+- Si cambió la ESTRUCTURA de algún Excel (hojas/columnas distintas), avísale a quien
+  mantiene el tablero para ajustar el lector.

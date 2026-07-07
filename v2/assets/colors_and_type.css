@@ -1,0 +1,184 @@
+/* =============================================================
+   AMSA / ADA — Colors & Typography
+   -------------------------------------------------------------
+   Sourced from:
+   - Antofagasta Minerals corporate palette (uploads/paleta compañía.PNG)
+   - ADA web app stylesheets (root.css, videowall.css, alarm.css)
+   Notes:
+   - The ADA application is built on Bootstrap 5 and ships a
+     grayscale operations-room palette with three semantic accent
+     colors (rojo / amarillo / azul). We preserve those tokens
+     1-to-1 so production code keeps working.
+   - AMSA's CORPORATE palette adds warm yellow + teal +
+     coral red. We expose those as `--amsa-*` brand tokens for
+     marketing surfaces (slides, decks, landing pages).
+   - User preference: when in doubt, lead with BLUE (azul / teal).
+   ============================================================= */
+
+:root {
+  /* ---------- AMSA Corporate Palette ----------------------- */
+  /* The "diamond" palette from the brand sheet. Use for       */
+  /* hero moments, marketing, decks. Not used inside ADA.      */
+  --amsa-teal:        #2a8a96;   /* primary corporate blue/teal */
+  --amsa-teal-light:  #b9dde0;   /* soft teal — backgrounds     */
+  --amsa-teal-deep:   #14515a;   /* deep teal — type on light   */
+  --amsa-yellow:      #f0a929;   /* corporate gold              */
+  --amsa-yellow-soft: #f7c976;   /* gold tint                   */
+  --amsa-red:         #e63b2e;   /* corporate coral red         */
+  --amsa-red-soft:    #f4a39c;   /* coral tint                  */
+
+  --amsa-ink:         #1a1d21;   /* almost-black for type       */
+  --amsa-paper:       #ffffff;
+  --amsa-paper-warm:  #f6f4ef;   /* warm off-white              */
+
+  /* ---------- ADA Operational Palette ---------------------- */
+  /* Verbatim from app/assets/css/root.css. DO NOT change      */
+  /* values — production CSS depends on them.                  */
+  --background:           #949494;
+  --primary-background:   #E1E1E1;
+  --secondary-background: #C7C7C7;
+
+  --light-gray:        #E1E1E1;
+  --light-medium-gray: #D7D7D7;
+  --medium-light-gray: #858585;
+  --medium-gray:       #4d4d4d;
+  --dark-gray:         #313131;
+  --dark-card:         #5D5D5D;
+  --border-color:      #BEBEBE;
+
+  /* Semantic alert colors used throughout videowall + mobile. */
+  --red:    #DC3545;
+  --yellow: #E0A800;
+  --blue:   #4782B4;
+
+  /* ---------- Bootstrap overrides (kept verbatim) ---------- */
+  --bs-body-font-size: 0.9rem;
+  --bs-body-color:     #5B5C64;
+  --bs-body-bg:        #DCDCDC;
+  --bs-primary:        #c3c3c3;
+  --bs-secondary:      #efeff2;
+  --bs-success:        #5B5C64;
+  --bs-info:           #3a3a39;
+  --bs-warning:        #E0A800;
+  --bs-danger:         #DC3545;
+  --bs-light:          #dcdcdc;
+  --bs-dark:           #3a3a39;
+  --bs-dark-hover:     #323130;
+  --bs-dark-active:    #2b2a29;
+  --bs-link-color:     #3a3a39;
+  --bs-link-hover-color: #323130;
+  --bs-border-radius:  5px;
+  --bs-border-color:   #c3c3c3;
+
+  /* ---------- Semantic foregrounds / surfaces -------------- */
+  --fg-1: #313131; /* primary text */
+  --fg-2: #4d4d4d; /* body / table cells */
+  --fg-3: #5B5C64; /* bootstrap body color */
+  --fg-4: #858585; /* muted, captions, axis labels */
+  --fg-on-dark:  #ffffff;
+  --fg-on-brand: #ffffff;
+
+  --surface-page:      #DCDCDC;  /* default page bg */
+  --surface-card:      #E1E1E1;  /* card surface    */
+  --surface-card-alt:  #ECECEC;  /* table header    */
+  --surface-card-deep: #C7C7C7;  /* emphasis        */
+  --surface-dark:      #3a3a39;  /* admin header    */
+
+  /* ---------- Status / KPI deviation ----------------------- */
+  /* Maps to df['color'] = "rojo|amarillo|azul" in the codebase */
+  --status-ok:       var(--blue);     /* on-plan or positive  */
+  --status-warning:  var(--yellow);   /* attention needed     */
+  --status-danger:   var(--red);      /* alarm / off-plan     */
+  --status-neutral:  var(--medium-gray);
+
+  /* ---------- Spacing / radii / shadow --------------------- */
+  --radius-xs: 3px;
+  --radius-sm: 5px;     /* bootstrap default */
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.06), 0 1px 1px rgba(0,0,0,0.04);
+  --shadow-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-3: 0 8px 24px rgba(0,0,0,0.12);
+  --inner-divider: inset 0 -1px 0 var(--border-color);
+
+  --border-thin:    1px solid var(--border-color);
+  --border-card:    2px solid var(--border-color);
+  --border-status-red:    2px solid var(--red);
+  --border-status-yellow: 2px solid var(--yellow);
+  --border-status-blue:   2px solid var(--blue);
+
+  /* ---------- Typography (families) ------------------------ */
+  /* ADA ships Arial (system) + a Montserrat link for headings. */
+  /* We expose 'display' for marketing/decks (Montserrat) and   */
+  /* 'sans' for app UI (Arial / system).                        */
+  --font-sans:    Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font-display: "Montserrat", Arial, sans-serif;
+  --font-mono:    SFMono-Regular, Menlo, Monaco, Consolas,
+                  "Liberation Mono", "Courier New", monospace;
+
+  /* ---------- Typography (scale) --------------------------- */
+  /* The videowall uses extremely small rem-based sizes that    */
+  /* are bumped up via media queries for the 3000px videowall   */
+  /* screen. The values below match the desktop scale.          */
+  --fs-display:  2.5rem;   /* hero — decks                  */
+  --fs-h1:       1.5rem;   /* admin header titles           */
+  --fs-h2:       1.2rem;
+  --fs-h3:       1.0rem;
+  --fs-body:     0.9rem;   /* bs-body-font-size             */
+  --fs-small:    0.8rem;
+  --fs-xs:       0.75rem;
+  --fs-tiny:     0.625rem; /* fs-text-global-title          */
+  --fs-micro:    0.5rem;   /* fs-text-title (videowall)     */
+
+  --lh-tight: 1.15;
+  --lh-snug:  1.3;
+  --lh-body:  1.5;
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-bold:    700;
+}
+
+/* =============================================================
+   Semantic element bindings
+   ============================================================= */
+body {
+  background-color: var(--surface-page);
+  color: var(--fg-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+h1, .h1 { font-family: var(--font-display); font-weight: var(--fw-bold);
+          font-size: var(--fs-h1); color: var(--fg-1); line-height: var(--lh-tight); }
+h2, .h2 { font-family: var(--font-display); font-weight: var(--fw-bold);
+          font-size: var(--fs-h2); color: var(--fg-1); line-height: var(--lh-snug); }
+h3, .h3 { font-family: var(--font-display); font-weight: var(--fw-bold);
+          font-size: var(--fs-h3); color: var(--fg-1); line-height: var(--lh-snug); }
+h5      { font-family: var(--font-sans);    font-weight: var(--fw-bold);
+          font-size: 0.813rem; }
+p       { margin: 0; color: var(--medium-gray); }
+
+code, pre, kbd, samp { font-family: var(--font-mono); }
+
+/* ADA's tiny utility classes — used across the videowall */
+.fs-text-title           { font-size: var(--fs-micro);  font-weight: var(--fw-bold); }
+.fs-text-primary         { font-size: 0.438rem; }
+.fs-text-global-title    { font-size: var(--fs-tiny); }
+.fs-text-global-indicator{ font-size: var(--fs-tiny); }
+
+/* Status helpers — mirrored from videowall.css */
+.color-rojo     { color: var(--red); }
+.color-amarillo { color: var(--yellow); }
+.color-azul     { color: var(--blue); }
+
+.background-rojo     { background-color: var(--red); }
+.background-amarillo { background-color: var(--yellow); }
+.background-azul     { background-color: var(--blue); }
+
+.border-rojo     { border-color: var(--red);    border-width: 2px; }
+.border-amarillo { border-color: var(--yellow); border-width: 2px; }
+.border-azul     { border-color: var(--blue);   border-width: 2px; }
