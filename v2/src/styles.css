@@ -153,6 +153,21 @@ button{font-family:inherit;cursor:pointer;}
 .btn.ghost:hover{background:var(--card-alt);color:var(--fg-1);}
 
 .mtable{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;}
+/* Tabla Resumen (NOTA: el CSS real se embebe desde construir_v2.py → embeber(), bloque /*RESUMEN-CSS*​/;
+   esta copia es solo de referencia). Tabla al 100% (llena la pantalla); la columna de nombres es
+   redimensible (arrastrando el borde del encabezado) y por defecto (auto) se achica al comparar más
+   columnas. Un spacer absorbe el sobrante cuando la columna está fijada a mano. */
+.mtable.resumen{width:100%;}
+.mtable.resumen thead .cols th.left{white-space:normal;line-height:1.7;position:relative;}
+.mtable.resumen td.name{overflow:hidden;}
+.mtable.resumen td.name .twig{max-width:100%;min-width:0;}
+.mtable.resumen td.name .twig > span:not(.tog){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.mtable.resumen .col-resize{position:absolute;top:0;right:-4px;width:9px;height:100%;cursor:col-resize;z-index:3;}
+.mtable.resumen .col-resize:hover{background:color-mix(in srgb,var(--amsa-teal) 35%,transparent);}
+.mtable.resumen td.spacer-fill,.mtable.resumen th.spacer-fill{padding:0;border:none;background:transparent;}
+/* Barrita de scroll horizontal superior (sincronizada con la tabla). */
+.hscroll-top{scrollbar-width:thin;}
+.hscroll-top::-webkit-scrollbar{height:10px;}
 .mtable th,.mtable td{padding:0;}
 .mtable thead .grp th{
   font-family:var(--font-disp);font-weight:700;font-size:11px;color:#fff;

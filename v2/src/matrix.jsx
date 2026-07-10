@@ -6,47 +6,123 @@ function parseLocaleNum(s) {
   if (str.indexOf(',') !== -1) { str = str.replace(/\./g, '').replace(',', '.'); }
   return parseFloat(str);
 }
-const DISP_BY = { vp: 'dispVP', ger: 'dispGer', item: 'dispItem', ceco: 'dispCeco', contra: 'dispContra' };
-const DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', item: 'Ítem Relevante', ceco: 'CECO', contra: 'Contrapartida' };
+const DISP_BY = { vp: 'dispVP', ger: 'dispGer', dceco: 'dispDceco', itemrel: 'dispItemRel', item: 'dispItem', ceco: 'dispCeco', contra: 'dispContra' };
+const DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', ceco: 'CECO', contra: 'Contrapartida', texto: 'Texto pedido', denom: 'Denominación', concepto: 'Concepto Gasto', actividad: 'Actividad' };
+// Familia de cada dimensión de detalle (para atenuar columnas que no aplican): REAL vs PPTO.
+const DIM_FAM = { contra: 'real', texto: 'real', denom: 'real', concepto: 'ppto', actividad: 'ppto' };
+const DET_DIMS = ['texto', 'denom'];   // niveles de detalle (v3) que cuelgan de Contrapartida
 
 // Aplana el árbol a filas visibles. Soporta N niveles (VP › Gerencia › Ítem › CECO…),
 // respetando el set de expandidos. type = por PROFUNDIDAD (para el estilo por nivel).
-function flattenTree(tree, expanded, q, dims) {
+function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMode, detP, sortCmp) {
   const A = window.CORP;
   const D = dims.map(d => A[DISP_BY[d]] || (x => x));
   const ql = (q || '').trim().toLowerCase();
-  const TYPE = ['vp', 'ger', 'item', 'ceco', 'contra'];
+  // Estilo por PROFUNDIDAD (jerarquía visual): 1º nivel = destacado (row-vp),
+  // 2º = medio (row-ger), resto = normal (row-item). Independiente de qué dimensión sea.
+  const clsFor = d => d === 0 ? 'vp' : d === 1 ? 'ger' : 'item';
+  const useDet = !!(detail && A.hasDetail && A.hasDetail());   // v3: detalle Real bajo Contrapartida
+  const useDetP = !!(detP && A.hasDetailP && A.hasDetailP());  // v3: detalle Ppto/Fcst (Concepto Gasto › Actividad)
+  // Ancla del detalle Ppto = el ÚLTIMO nivel de la estructura que NO sea Contrapartida
+  // (Concepto Gasto › Actividad cuelga de ahí, acotado a ese nivel, sea Ítem, CECO, Ítem
+  // Relevante, Desc. CECO, Gerencia o VP — lo que el usuario haya dejado como último).
+  const ppAnchor = useDetP ? dims.reduce((a, d, i) => (d !== 'contra' ? i : a), -1) : -1;
+  const years = tree.years || [];
   const rows = [];
-  const matches = (n, depth) => {
-    if (!ql) return true;
-    if (String(D[depth](n.name)).toLowerCase().includes(ql)) return true;
-    return n.children ? n.children.some(c => matches(c, depth + 1)) : false;
+  // TOPE de filas: una búsqueda amplia (o expandir todo) puede revelar decenas de miles
+  // de filas de detalle y congelar el navegador. Cortamos y avisamos (rows.truncated).
+  const MAX_ROWS = 4000;
+  const nameHit = (n, depth) => { const disp = D[depth] || (x => x); return String(disp(n.name)).toLowerCase().includes(ql); };
+  // ¿Este nodo o alguno de sus descendientes (incl. el DETALLE: texto/denom/documento) coincide?
+  const lastDim = dims[dims.length - 1];
+  const subtreeMatch = (n, depth, ctx) => {
+    if (nameHit(n, depth)) return true;
+    const dim = dims[depth];
+    // El detalle (texto/denom/doc) solo cuelga cuando Contrapartida es el ÚLTIMO nivel.
+    if (dim === 'contra' && depth === dims.length - 1) return useDet && A.detailMatch ? A.detailMatch(Object.assign({}, ctx, { contra: n.name }), ql, stMode) : false;
+    // El detalle Ppto/Fcst (Concepto Gasto › Actividad) cuelga del nivel más profundo entre Ítem y CECO.
+    if (depth === ppAnchor && useDetP && A.detailMatchP && A.detailMatchP(Object.assign({}, ctx, { [dim]: n.name }), ql)) return true;
+    if (n.children && n.children.length) {
+      const c2 = Object.assign({}, ctx); c2[dim] = n.name;
+      return n.children.some(c => subtreeMatch(c, depth + 1, c2));
+    }
+    return false;
   };
-  function walk(nodes, depth, prefix) {
+  // Niveles de detalle Real (Texto pedido › Denominación) generados al vuelo desde window.DET.
+  function walkDetail(nodes, depth, prefix) {
+    if (rows.length >= MAX_ROWS) return;
+    if (sortCmp) nodes = nodes.slice().sort(sortCmp);   // ordenar el detalle por la columna activa
     nodes.forEach(n => {
-      // El Ppto no tiene contrapartida: no mostramos ese nodo "(Presupuesto)" a nivel
-      // Contrapartida (confunde). El monto igual cuenta en el CECO padre.
-      if (dims[depth] === 'contra' && n.name === '(Presupuesto)') return;
-      if (!matches(n, depth)) return;
-      const key = prefix ? prefix + '|' + n.name : n.name;
+      if (rows.length >= MAX_ROWS) return;
+      const key = prefix + '|' + n.name + (n.doc ? '#' + n.doc : '');
       const expandable = !!(n.children && n.children.length);
-      rows.push({ type: TYPE[depth] || 'ceco', key, node: n, level: depth + 1, expandable, dim: dims[depth] });
-      if (expandable && expanded.has(key)) walk(n.children, depth + 1, key);
+      // Colapsar manual GANA sobre el auto-abrir de la búsqueda (permite esconder ramas al buscar).
+      const open = (collapsed && collapsed.has(key)) ? false : (ql ? true : expanded.has(key));
+      rows.push({ type: clsFor(depth), key, node: n, level: depth + 1, expandable, dim: n._dim, doc: n.doc, open, fam: 'real' });
+      if (expandable && open) walkDetail(n.children, depth + 1, key);
     });
   }
-  walk(tree.vpNodes, 0, '');
+  // Niveles de detalle Ppto/Fcst (Concepto Gasto › Actividad) desde window.DETP.
+  function walkDetailP(nodes, depth, prefix) {
+    if (rows.length >= MAX_ROWS) return;
+    if (sortCmp) nodes = nodes.slice().sort(sortCmp);   // ordenar el detalle por la columna activa
+    nodes.forEach(n => {
+      if (rows.length >= MAX_ROWS) return;
+      const key = prefix + '|P|' + n.name;
+      const expandable = !!(n.children && n.children.length);
+      const open = (collapsed && collapsed.has(key)) ? false : (ql ? true : expanded.has(key));
+      rows.push({ type: clsFor(depth), key, node: n, level: depth + 1, expandable, dim: n._dim, open, fam: 'ppto' });
+      if (expandable && open) walkDetailP(n.children, depth + 1, key);
+    });
+  }
+  // force = un ancestro coincidió por nombre → mostrar TODO su subárbol.
+  function walk(nodes, depth, prefix, ctx, force) {
+    if (rows.length >= MAX_ROWS) return;
+    nodes.forEach(n => {
+      if (rows.length >= MAX_ROWS) return;
+      const dim = dims[depth];
+      // El Ppto/Forecast no tienen contrapartida: no mostramos esos nodos a nivel
+      // Contrapartida (confunde). El monto igual cuenta en el nivel padre.
+      if (dim === 'contra' && (n.name === '(Presupuesto)' || n.name === '(Forecast)' || n.name === '(Ppto2027)')) return;
+      const self = ql ? nameHit(n, depth) : true;
+      if (ql && !force && !self && !subtreeMatch(n, depth, ctx)) return;
+      const key = prefix ? prefix + '|' + n.name : n.name;
+      const ctx2 = Object.assign({}, ctx); ctx2[dim] = n.name;
+      const detHere = useDet && dim === 'contra' && depth === dims.length - 1;   // detalle Real solo si Contrapartida es el último nivel
+      const detPHere = useDetP && depth === ppAnchor;                            // detalle Ppto/Fcst cuelga del nivel más profundo entre Ítem y CECO
+      const hasKids = !!(n.children && n.children.length);
+      const expandable = detHere ? A.hasDetailFor(ctx2, stMode) : (hasKids || (detPHere && A.hasDetailPFor(ctx2)));
+      const childForce = force || self;
+      // Colapsar manual GANA sobre el auto-abrir de la búsqueda (permite esconder ramas al buscar).
+      const open = (collapsed && collapsed.has(key)) ? false : (ql ? true : expanded.has(key));
+      rows.push({ type: clsFor(depth), key, node: n, level: depth + 1, expandable, dim, open, fam: DIM_FAM[dim] });
+      if (expandable && open) {
+        if (detHere) {
+          walkDetail(A.detailNodes(ctx2, years, childForce ? null : ql, detOrder, stMode), depth + 1, key);
+        } else {
+          if (hasKids) walk(n.children, depth + 1, key, ctx2, childForce);
+          // Bajo el Ítem: además de las Contrapartidas (Real), cuelga Concepto Gasto › Actividad (Ppto/Fcst).
+          if (detPHere && A.hasDetailPFor(ctx2)) walkDetailP(A.detailNodesP(ctx2, childForce ? null : ql), depth + 1, key);
+        }
+      }
+    });
+  }
+  walk(tree.vpNodes, 0, '', {}, false);
+  if (rows.length >= MAX_ROWS) rows.truncated = MAX_ROWS;   // se cortó: la UI muestra aviso
   return rows;
 }
 
-function Twig({ row, expanded, onToggle, dims, onPick, active }) {
+function Twig({ row, expanded, onToggle, dims, onPick, active, onHide }) {
   const A = window.CORP;
   const dim = row.dim || dims[row.level - 1];
   const name = (A[DISP_BY[dim]] || (x => x))(row.node.name);
   // Código al lado cuando corresponde: Ítem → Cód_Agrupación2 (CLACO) · CECO → código CECO.
-  const code = dim === 'item' ? (A.itemCode ? A.itemCode(row.node.name) : null)
-             : dim === 'ceco' ? row.node.name : null;
+  const code = (dim === 'item' || dim === 'itemrel') ? (A.itemCode ? A.itemCode(row.node.name) : null)
+             : dim === 'ceco' ? row.node.name
+             : (dim === 'denom' || dim === 'texto') ? ((row.doc && row.doc !== '—') ? 'Doc ' + row.doc : null)   // Documento compra (en la hoja del detalle)
+             : null;
   const showCode = code && String(code) !== String(name);
-  const isOpen = expanded.has(row.key);
+  const isOpen = row.open != null ? row.open : expanded.has(row.key);
   return (
     <span className={'twig ind-' + row.level}>
       {row.expandable
@@ -54,7 +130,7 @@ function Twig({ row, expanded, onToggle, dims, onPick, active }) {
         : <span className="tog empty"></span>}
       <span
         onClick={onPick ? () => onPick(row) : undefined}
-        title={onPick ? 'Filtrar todo el panel por este elemento (clic de nuevo para quitar)' : undefined}
+        title={onPick ? name + ' — clic para filtrar el panel por este elemento (clic de nuevo para quitar)' : name}
         style={onPick ? {
           cursor: 'pointer', borderRadius: 4, padding: '1px 6px', margin: '0 -6px',
           background: active ? 'var(--teal-100)' : 'transparent',
@@ -64,6 +140,10 @@ function Twig({ row, expanded, onToggle, dims, onPick, active }) {
         } : undefined}
       >{name}</span>
       {showCode ? <span style={{ marginLeft: 7, fontSize: 10.5, color: 'var(--fg-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums' }}>{code}</span> : null}
+      {(onHide && ['vp', 'ger', 'dceco', 'ceco', 'itemrel', 'item', 'contra'].includes(dim)) ? (
+        <button className="rowhide" title={'Ocultar «' + name + '» de la tabla'}
+          onClick={e => { e.stopPropagation(); onHide(dim, row.node.name); }}>⊘</button>
+      ) : null}
     </span>
   );
 }
@@ -71,7 +151,7 @@ function Twig({ row, expanded, onToggle, dims, onPick, active }) {
 /* ---------------- Bloque de 5 columnas (Real/Versión/Dif/%Dif/KPI) ---------------- */
 function execCells(real, version, unit, thr, A, keyPrefix, dec) {
   // Fila "vacía": Real y Ppto ambos se muestran como 0 al detalle de decimales actual.
-  const div = unit === 'kUSD' ? 1e3 : 1e6;
+  const div = unit === 'kUSD' ? 1e3 : unit === 'USD' ? 1 : 1e6;
   const zeroThr = 0.5 * div * Math.pow(10, -(dec || 0));
   const realZero = Math.abs(real) < zeroThr;
   const verZero = Math.abs(version) < zeroThr;
@@ -90,7 +170,7 @@ function execCells(real, version, unit, thr, A, keyPrefix, dec) {
   ];
 }
 
-/* ---------------- Bloque Propuesta 2027 (2 columnas: valor + Δ vs Real) ---------------- */
+/* ---------------- Bloque Presupuesto 2027 (2 columnas: valor + Δ vs Real) ---------------- */
 // prom = promedio anual Real de los años seleccionados = ytdReal / nYears.
 function propCells(node, editable, nYears, unit, dec, A, keyPrefix, onEditProp, companiesActive, yearsLabel) {
   const a = node.agg;
@@ -98,14 +178,14 @@ function propCells(node, editable, nYears, unit, dec, A, keyPrefix, onEditProp, 
   const prom = nYears ? a.ytdReal / nYears : 0;
   const d = prop - prom;
   const pct = prom ? d / Math.abs(prom) : null;
-  const div = unit === 'kUSD' ? 1e3 : 1e6;
-  // El ámbar identifica la cifra de presupuesto propuesto (misma identidad que la barra "Propuesta 27").
+  const div = unit === 'kUSD' ? 1e3 : unit === 'USD' ? 1 : 1e6;
+  // El ámbar identifica la cifra de presupuesto propuesto (misma identidad que la barra "Presupuesto 27").
   const tint = 'rgba(240,169,41,.09)';   // ámbar muy tenue para la columna del valor 2027
   const sep = '2px solid var(--accent-300)';
   return [
     <td className="tnum" style={{ background: tint, borderLeft: sep, color: 'var(--ink)', fontWeight: 600 }} key={keyPrefix + 'prop'}>
       {editable && !companiesActive
-        ? <input className="prop-inp" type="text" defaultValue={(prop / div).toFixed(unit === 'kUSD' ? 0 : 2).replace('.', ',')}
+        ? <input className="prop-inp" type="text" defaultValue={(prop / div).toFixed((unit === 'kUSD' || unit === 'USD') ? 0 : 2).replace('.', ',')}
             key={node.recIds.join(',') + ':' + yearsLabel}
             onBlur={e => { const val = parseLocaleNum(e.target.value); if (!isNaN(val)) onEditProp(node, val * div); }}
             onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }} />
@@ -152,11 +232,11 @@ function ColHeader({ col, sort, onSortDir, onPin, onHide, pinned, style, classNa
 function Matrix(props) {
   const A = window.CORP;
   const { tree, showProp, nYears, yearAgg, yearsLabel, unit, thr, decimals, versionLabel, q, sort, onSort, onSortDir,
-    hiddenCols, pinnedCols, onHide, onPin, expanded, onToggle, onEditProp, companiesActive, onRowFilter, filterSel, onClearFilter } = props;
+    hiddenCols, pinnedCols, onHide, onPin, expanded, onToggle, onEditProp, companiesActive, onRowFilter, filterSel, onClearFilter, stMode } = props;
   // "Limpiar ×" en el encabezado de la columna de jerarquía: aparece solo si hay
   // alguna categoría filtrada (VP/Gerencia/Ítem), por clic en la tabla o por los
   // desplegables. stopPropagation para no abrir el menú de ordenar de la columna.
-  const anyFilter = !!(filterSel && ((filterSel.vps && filterSel.vps.length) || (filterSel.gers && filterSel.gers.length) || (filterSel.items && filterSel.items.length)));
+  const anyFilter = !!(filterSel && ((filterSel.vps && filterSel.vps.length) || (filterSel.gers && filterSel.gers.length) || (filterSel.itemrels && filterSel.itemrels.length) || (filterSel.items && filterSel.items.length)));
   const clearEl = (anyFilter && onClearFilter) ? (
     <span role="button" title="Quitar el filtro de categoría" onClick={(e) => { e.stopPropagation(); onClearFilter(); }}
       style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 4, background: 'rgba(255,255,255,.18)', color: '#fff',
@@ -165,11 +245,14 @@ function Matrix(props) {
     </span>
   ) : null;
   const dims = tree.dims || ['vp', 'ger', 'item'];
-  const headerLbl = dims.map(d => DIM_LBL[d]).join(' / ');
-  const rows = flattenTree(tree, expanded, q, dims);
+  // v3: si hay detalle embebido y NO estamos en modo "Por año", cuelgan Texto pedido ›
+  // Denominación bajo cada Contrapartida (lazy). El encabezado lo refleja.
+  const detailOn = !tree.byYear && dims[dims.length - 1] === 'contra' && !!(A.hasDetail && A.hasDetail());
+  const headerLbl = dims.map(d => DIM_LBL[d]).join(' / ') + (detailOn ? ' / ' + DET_DIMS.map(d => DIM_LBL[d]).join(' / ') : '');
+  const rows = flattenTree(tree, expanded, q, dims, detailOn, undefined, undefined, stMode);
   // Una fila está "activa" como filtro global si su dimensión está filtrada
   // exactamente por su valor (selección única).
-  const FILT_KEY = { vp: 'vps', ger: 'gers', item: 'items' };
+  const FILT_KEY = { vp: 'vps', ger: 'gers', itemrel: 'itemrels', item: 'items' };
   const onPick = onRowFilter ? (row) => onRowFilter(row, dims) : undefined;
   const rowActive = (row) => {
     const sel = (filterSel && filterSel[FILT_KEY[dims[row.level - 1]]]) || [];
@@ -185,12 +268,12 @@ function Matrix(props) {
     const arrowY = (k) => (sort && sort.key === k) ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
     const shY = (k) => ({ onClick: () => onSort && onSort(k), style: { cursor: 'pointer', userSelect: 'none' } });
     const pcY = (node, editable, kp) => propCells(node, editable, nYears, unit, decimals, A, kp, onEditProp, companiesActive, yearsLabel);
-    const yearCells = (agg, kp) => yrs.flatMap((y, i) => {
+    const yearCells = (agg, kp, noPpto) => yrs.flatMap((y, i) => {
       const yv = (agg.yr && agg.yr[y]) || { real: 0, ver: 0 };
       const sep = i ? { borderLeft: '1px solid var(--teal-200)' } : undefined;
       return [
         <td className="real tnum" style={sep} key={kp + y + 'r'}>{A.fmt(yv.real, unit, decimals)}</td>,
-        <td className="ver tnum" key={kp + y + 'p'}>{A.fmt(yv.ver, unit, decimals)}</td>,
+        <td className="ver tnum" style={noPpto ? { color: 'var(--fg-muted)' } : undefined} key={kp + y + 'p'}>{noPpto ? 'N/A' : A.fmt(yv.ver, unit, decimals)}</td>,
       ];
     });
     return (
@@ -200,7 +283,7 @@ function Matrix(props) {
             <th className="nameblk" rowSpan="2" {...shY('name')}>{headerLbl}{arrowY('name')}{clearEl}</th>
             <th className="spacer" rowSpan="2"></th>
             {yrs.map((y, i) => <th key={y} colSpan="2" style={i ? { borderLeft: '1px solid var(--teal-200)' } : undefined}>{y} · {unit}</th>)}
-            {showProp && <th colSpan="2" style={{ borderLeft: '2px solid var(--accent-300)' }}>Propuesta 2027 · {unit}</th>}
+            {showProp && <th colSpan="2" style={{ borderLeft: '2px solid var(--accent-300)' }}>Presupuesto 2027 · {unit}</th>}
           </tr>
           <tr className="cols">
             {yrs.flatMap((y, i) => [
@@ -216,8 +299,8 @@ function Matrix(props) {
             <tr key={row.key} className={'row-' + row.type}>
               <td className="name"><Twig row={row} expanded={expanded} onToggle={onToggle} dims={dims} onPick={onPick} active={rowActive(row)} /></td>
               <td className="spacer"></td>
-              {yearCells(row.node.agg, row.key + ':')}
-              {showProp && pcY(row.node, row.type === 'item', row.key + ':')}
+              {yearCells(row.node.agg, row.key + ':', row.dim === 'contra')}
+              {showProp && pcY(row.node, row.dim === 'item', row.key + ':')}
             </tr>
           ))}
           <tr className="row-total">
@@ -265,38 +348,41 @@ function Matrix(props) {
     : undefined;
   const spSt = pinActive ? { position: 'sticky', left: NAMEW, zIndex: 3, background: '#fff' } : undefined;
 
-  const ctxFor = (node, type) => {
+  const ctxFor = (node, type, dim) => {
     const agg = node.agg;
     const real = agg.ytdReal * fAgg, ver = agg.ytdVersion * fAgg;
-    const div = unit === 'kUSD' ? 1e3 : 1e6, zt = 0.5 * div * Math.pow(10, -(decimals || 0));
+    const div = unit === 'kUSD' ? 1e3 : unit === 'USD' ? 1 : 1e6, zt = 0.5 * div * Math.pow(10, -(decimals || 0));
     const empty = Math.abs(real) < zt && Math.abs(ver) < zt, verZero = Math.abs(ver) < zt, dif = real - ver;
     const pct = empty ? null : (verZero ? (real > 0 ? 1 : -1) : dif / Math.abs(ver));
     const difColor = empty ? 'var(--ink)' : (dif < 0 ? 'var(--ok)' : dif > 0 ? 'var(--red)' : 'var(--fg-soft)');
     const prom = nYears ? agg.ytdReal / nYears : 0, prop = agg.prop || 0;
     const dprop = prom ? (prop - prom) / Math.abs(prom) : null;
-    return { node, type, real, ver, dif, pct, difColor, empty, prom, prop, dprop };
+    // El presupuesto NO se abre por contrapartida (solo existe a nivel Ítem/CECO). A ese
+    // detalle el Ppto es "n/A": no se muestra 0 ni se calcula Dif/%/KPI (no tiene sentido).
+    const noPpto = dim === 'contra' || dim === 'texto' || dim === 'denom';   // detalle = solo Real
+    return { node, type, dim, real, ver, dif, pct, difColor, empty, prom, prop, dprop, noPpto };
   };
   const cell = (col, c, isTotal) => {
     const ps = pinSt(col.key, false);
     const merge = (s) => ps ? { ...s, ...ps } : s;
     switch (col.key) {
       case 'real': return <td key="real" className="real tnum" style={ps || undefined}>{A.fmt(c.real, unit, decimals)}</td>;
-      case 'version': return <td key="version" className="ver tnum" style={ps || undefined}>{A.fmt(c.ver, unit, decimals)}</td>;
-      case 'dif': return <td key="dif" className="dif tnum" style={merge({ color: c.difColor })}>{c.empty ? A.fmt(0, unit, decimals) : (c.dif > 0 ? '+' : '') + A.fmt(c.dif, unit, decimals)}</td>;
-      case 'pct': return <td key="pct" className="pct" style={merge({ color: c.difColor })}>{c.pct == null ? '—' : (c.pct > 0 ? '+' : '') + A.fmtPct(c.pct, 0)}</td>;
-      case 'kpi': return <td key="kpi" className="kpi" style={ps || undefined}>{c.empty ? null : <span className="dot" style={{ background: A.kpiHex(A.kpiColor(c.real, c.ver, thr)) }}></span>}</td>;
+      case 'version': return <td key="version" className="ver tnum" style={c.noPpto ? merge({ color: 'var(--fg-muted)' }) : (ps || undefined)}>{c.noPpto ? 'N/A' : A.fmt(c.ver, unit, decimals)}</td>;
+      case 'dif': return <td key="dif" className="dif tnum" style={c.noPpto ? merge({ color: 'var(--fg-muted)' }) : merge({ color: c.difColor })}>{c.noPpto ? 'N/A' : (c.empty ? A.fmt(0, unit, decimals) : (c.dif > 0 ? '+' : '') + A.fmt(c.dif, unit, decimals))}</td>;
+      case 'pct': return <td key="pct" className="pct" style={c.noPpto ? merge({ color: 'var(--fg-muted)' }) : merge({ color: c.difColor })}>{c.noPpto ? 'N/A' : (c.pct == null ? '—' : (c.pct > 0 ? '+' : '') + A.fmtPct(c.pct, 0))}</td>;
+      case 'kpi': return <td key="kpi" className="kpi" style={ps || undefined}>{(c.noPpto || c.empty) ? null : <span className="dot" style={{ background: A.kpiHex(A.kpiColor(c.real, c.ver, thr)) }}></span>}</td>;
       case 'prop': {
-        const editable = c.type === 'item' && !isTotal, div = unit === 'kUSD' ? 1e3 : 1e6;
-        return <td key="prop" className="tnum" style={merge({ background: ps ? '#fff' : 'rgba(240,169,41,.09)', borderLeft: '2px solid var(--accent-300)', color: 'var(--ink)', fontWeight: 600 })}>
-          {editable && !companiesActive
-            ? <input className="prop-inp" type="text" defaultValue={(c.prop / div).toFixed(unit === 'kUSD' ? 0 : 2).replace('.', ',')}
+        const editable = c.dim === 'item' && !isTotal && !c.noPpto, div = unit === 'kUSD' ? 1e3 : unit === 'USD' ? 1 : 1e6;
+        return <td key="prop" className="tnum" style={merge({ background: ps ? '#fff' : 'rgba(240,169,41,.09)', borderLeft: '2px solid var(--accent-300)', color: c.noPpto ? 'var(--fg-muted)' : 'var(--ink)', fontWeight: 600 })}>
+          {c.noPpto ? 'N/A' : (editable && !companiesActive
+            ? <input className="prop-inp" type="text" defaultValue={(c.prop / div).toFixed((unit === 'kUSD' || unit === 'USD') ? 0 : 2).replace('.', ',')}
                 key={c.node.recIds.join(',') + ':' + yearsLabel}
                 onBlur={e => { const v = parseLocaleNum(e.target.value); if (!isNaN(v)) onEditProp(c.node, v * div); }}
                 onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }} />
-            : A.fmt(c.prop, unit, decimals)}
+            : A.fmt(c.prop, unit, decimals))}
         </td>;
       }
-      case 'dprop': return <td key="dprop" className="pct tnum" style={merge({ color: 'var(--fg-3)' })}>{c.dprop == null ? '—' : (c.dprop > 0 ? '+' : '') + A.fmtPct(c.dprop, 0)}</td>;
+      case 'dprop': return <td key="dprop" className="pct tnum" style={merge({ color: 'var(--fg-3)' })}>{c.noPpto ? 'N/A' : (c.dprop == null ? '—' : (c.dprop > 0 ? '+' : '') + A.fmtPct(c.dprop, 0))}</td>;
       default: return null;
     }
   };
@@ -316,7 +402,7 @@ function Matrix(props) {
               <ColHeader col={nameCol} {...hp} pinned={false} className="nameblk" align="flex-start" rowSpan="2" style={{ verticalAlign: 'bottom' }} extra={clearEl} />
               <th className="spacer" rowSpan="2"></th>
               {stdVisible.length > 0 && <th colSpan={stdVisible.length}>{aggLbl} · {yearsLabel} · {unit}</th>}
-              {propVisible.length > 0 && <th colSpan={propVisible.length} style={{ borderLeft: '2px solid var(--accent-300)' }}>Propuesta 2027 · {unit}</th>}
+              {propVisible.length > 0 && <th colSpan={propVisible.length} style={{ borderLeft: '2px solid var(--accent-300)' }}>Presupuesto 2027 · {unit}</th>}
             </tr>
             <tr className="cols">
               {visible.map(c => (
@@ -341,7 +427,7 @@ function Matrix(props) {
       </thead>
       <tbody>
         {rows.map(row => {
-          const c = ctxFor(row.node, row.type);
+          const c = ctxFor(row.node, row.type, row.dim);
           return (
             <tr key={row.key} className={'row-' + row.type}>
               <td className="name" style={nameSt(false)}><Twig row={row} expanded={expanded} onToggle={onToggle} dims={dims} onPick={onPick} active={rowActive(row)} /></td>
@@ -350,6 +436,11 @@ function Matrix(props) {
             </tr>
           );
         })}
+        {rows.truncated && (
+          <tr><td colSpan={20} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--amsa-teal-deep)', background: 'var(--accent-wash)', fontWeight: 600 }}>
+            Mostrando las primeras {rows.truncated.toLocaleString('es-CL')} filas. Afiná la búsqueda o expandí manualmente para ver el resto.
+          </td></tr>
+        )}
         <tr className="row-total">
           <td className="name" style={nameSt(false)}>Total</td>
           <td className="spacer" style={spSt}></td>

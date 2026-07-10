@@ -108,21 +108,27 @@ function SwitchToggle({ label, on, onClick, color }) {
 /* ---------------- Filter bar ---------------- */
 function FilterBar(props) {
   const A = window.CORP;
-  const { st, set, gerOptions, itemOptions, tcOptions, apOptions } = props;
+  const { st, set, gerOptions, itemrelOptions, cecoOptions, clacoOptions, tcOptions, clasOptions, apOptions } = props;
   // Toggles globales (valor Normal/Ajustada 2027 · CECOS nuevos/antiguos).
   const valMode = props.valMode || 'n', cecoMode = props.cecoMode || 'new';
   const onValMode = props.onValMode || (() => {}), onCecoMode = props.onCecoMode || (() => {});
-  // Opciones de Ítem y Gerencia según el modo de datos activo (corp/dist/ambos).
-  const itemVals = itemOptions || A.D.items;
-  const itemOpts = itemVals.map(v => ({ value: v, label: A.dispItem(v) }));
+  // Opciones de Ítem Relevante (Agrupación3) y Gerencia según el modo de datos activo.
+  const itemrelVals = itemrelOptions || [];
+  const itemrelOpts = itemrelVals.map(v => ({ value: v, label: A.dispItemRel(v) }));
   // Tipo Costo (C1/C3/Comercialización) y ¿Aplica? (Sí/No) desde CECOS, por código.
   const tcOpts = (tcOptions || []).map(v => ({ value: v, label: v }));
+  const cecoOpts = [...new Set([...(cecoOptions || []), ...(st.cecos || [])])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
+  const clacoOpts = [...new Set([...(clacoOptions || []), ...(st.clacos || [])])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
+  const clasOpts = (clasOptions || []).map(v => ({ value: v, label: v }));
   const apOpts = (apOptions || []).map(v => ({ value: v, label: v }));
-  // Incluye cualquier VP presente en los registros (p. ej. una gerencia reasignada
-  // a otra VP desde el Diccionario), además del catálogo base.
-  const vpOpts = [...new Set([...A.D.vps, ...A.records.map(r => r.vp)])].map(v => ({ value: v, label: A.dispVP(v) }));
+  // VP/Gerencia SOLO de los registros de GASTO (corp/dist según el toggle Datos); NO de
+  // Dotaciones (que usan otra convención "Vicepresidencia X" y duplicarían la lista).
+  const gastoRecs = A.activeRecords({ dataMode: st.dataMode || 'both' });
+  const vpOpts = [...new Set(gastoRecs.map(r => r.vp))]
+    .sort((a, b) => A.dispVP(a).localeCompare(A.dispVP(b), 'es'))
+    .map(v => ({ value: v, label: A.dispVP(v) }));
   const gerVals = gerOptions
-    || (st.vps.length ? [...new Set(A.records.filter(r => st.vps.includes(r.vp)).map(r => r.ger))] : A.D.gers);
+    || (st.vps.length ? [...new Set(gastoRecs.filter(r => st.vps.includes(r.vp)).map(r => r.ger))] : A.D.gers);
   const gerOpts = gerVals.map(v => ({ value: v, label: A.dispGer(v) }));
   const compOpts = A.COMPANIAS.map(c => ({ value: c.id, label: `${c.id} · ${c.nombre}` }));
   const mode = st.dataMode || 'both';
@@ -134,17 +140,20 @@ function FilterBar(props) {
     // Al cambiar de modo, conservar las selecciones de Gerencia/Ítem que sigan
     // siendo válidas en el nuevo conjunto de datos (no borrar todo el filtro).
     const dims = A.dimsFor({ ...st, dataMode });
-    const gset = new Set(dims.gers), iset = new Set(dims.items);
-    set({ dataMode, gers: st.gers.filter(g => gset.has(g)), items: st.items.filter(i => iset.has(i)) });
+    const gset = new Set(dims.gers), iset = new Set(dims.items), irset = new Set(dims.itemrels);
+    set({ dataMode, gers: st.gers.filter(g => gset.has(g)),
+      items: st.items.filter(i => iset.has(i)),
+      itemrels: (st.itemrels || []).filter(i => irset.has(i)) });
   };
 
-  // Año: multi-selección de años reales (2022-2025). La Propuesta 2027 ya no vive
+  // Año: multi-selección de años reales (2022-2025). La Presupuesto 2027 ya no vive
   // aquí: es un switch aparte (capa de comparación aditiva).
   const yearOpts = [
     { value: 2022, label: '2022' }, { value: 2023, label: '2023' },
     { value: 2024, label: '2024' }, { value: 2025, label: '2025' },
     { value: 2026, label: '2026 YTD' },     // acumulado ene–may 2026 (Real vs Ppto)
     { value: '2026fy', label: '2026 Ppto FY' }, // presupuesto anual 2026 (solo Ppto, sin Real)
+    { value: '2026fcst', label: '2026 Forecast 5+7' }, // forecast anual 2026 (suma al Real)
   ];
   const onYears = (v) => set({ years: v }); // años reales; permite vacío (Limpiar)
   const showProp = !!st.showProp;
@@ -165,6 +174,36 @@ function FilterBar(props) {
         <MultiSelect options={tcOpts} selected={st.tcs || []} onChange={v => set({ tcs: v })} placeholder="Todos" />
       </div>
     </div>,
+    <div className="fgroup" style={{ minWidth: 160 }} key="clas">
+      <div className="fcap">Clasificación Cuenta</div>
+      <div className="fctl">
+        <MultiSelect options={clasOpts} selected={st.clases || []} onChange={v => set({ clases: v })} placeholder="Todas" />
+      </div>
+    </div>,
+    (A.hasST && A.hasST()) ? (
+    <div className="fgroup" style={{ minWidth: 150 }} key="st">
+      <div className="fcap">Services &amp; Tech</div>
+      <div className="fctl">
+        <select value={st.stMode || ''} onChange={e => set({ stMode: e.target.value })} style={{ minWidth: 0, width: '100%' }}
+          title="CLACOs 6125020/6125021. Solo Ppto y Forecast los distinguen; el Real no (queda 0).">
+          <option value="">Todos</option>
+          <option value="only">Solo Services &amp; Tech</option>
+          <option value="excl">Sin Services &amp; Tech</option>
+        </select>
+      </div>
+    </div>) : null,
+    <div className="fgroup" style={{ minWidth: 150 }} key="ceco">
+      <div className="fcap">Código CECO</div>
+      <div className="fctl">
+        <MultiSelect options={cecoOpts} selected={st.cecos || []} onChange={v => set({ cecos: v })} placeholder="Todos" searchable />
+      </div>
+    </div>,
+    <div className="fgroup" style={{ minWidth: 150 }} key="claco">
+      <div className="fcap">Código CLACO</div>
+      <div className="fctl">
+        <MultiSelect options={clacoOpts} selected={st.clacos || []} onChange={v => set({ clacos: v })} placeholder="Todos" searchable />
+      </div>
+    </div>,
     <div className="fgroup" style={{ minWidth: 150 }} key="ap">
       <div className="fcap">¿Aplica?</div>
       <div className="fctl">
@@ -172,7 +211,7 @@ function FilterBar(props) {
       </div>
     </div>,
   ];
-  const nMore = ((st.tcs && st.tcs.length) ? 1 : 0) + ((st.aps && st.aps.length) ? 1 : 0);
+  const nMore = ((st.tcs && st.tcs.length) ? 1 : 0) + ((st.clases && st.clases.length) ? 1 : 0) + ((st.aps && st.aps.length) ? 1 : 0) + ((st.cecos && st.cecos.length) ? 1 : 0) + ((st.clacos && st.clacos.length) ? 1 : 0) + (st.stMode ? 1 : 0);
 
   // Colapso dinámico: los filtros que no caben en una fila se mueven al "+".
   const [nHidden, setNHidden] = useStateF(0);
@@ -194,17 +233,17 @@ function FilterBar(props) {
     return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', measure); };
   }, [nHidden, mode]);
   const collapsibleEls = [
-    <div className="fgroup grow" style={{ minWidth: 140 }} key="item">
-      <div className="fcap">Ítem Relevante (CLACO)</div>
+    <div className="fgroup grow" style={{ minWidth: 140 }} key="itemrel">
+      <div className="fcap">Ítem Relevante</div>
       <div className="fctl">
-        <MultiSelect options={itemOpts} selected={st.items} onChange={v => set({ items: v })} placeholder="Todas" searchable />
+        <MultiSelect options={itemrelOpts} selected={st.itemrels || []} onChange={v => set({ itemrels: v })} placeholder="Todas" searchable />
       </div>
     </div>,
     <div className="fgroup grow" style={{ minWidth: 140 }} key="vp">
       <div className="fcap">Vicepresidencia</div>
       <div className="fctl">
         <MultiSelect options={vpOpts} selected={st.vps}
-          onChange={v => set({ vps: v, gers: st.gers.filter(g => !v.length || A.records.some(r => v.includes(r.vp) && r.ger === g)) })}
+          onChange={v => { const vpCecos = [...new Set(A.records.filter(r => v.includes(r.vp)).map(r => r.ceco))]; set({ vps: v, gers: st.gers.filter(g => !v.length || A.records.some(r => v.includes(r.vp) && r.ger === g)), cecos: [...new Set([...(st.cecos || []), ...vpCecos])] }); }}
           placeholder="Todas" searchable />
       </div>
     </div>,
@@ -235,8 +274,8 @@ function FilterBar(props) {
           </select>
         </div>
       </div>
-      <div className="fgroup" style={{ minWidth: 108, width: 108 }}>
-        <div className="fcap">CECOS</div>
+      <div className="fgroup" style={{ minWidth: 140, width: 140 }}>
+        <div className="fcap">Estructura CECOS</div>
         <div className="fctl">
           <select value={cecoMode} onChange={e => onCecoMode(e.target.value)} style={{ minWidth: 0, width: '100%' }}>
             <option value="new">Nuevos</option>
@@ -255,7 +294,7 @@ function FilterBar(props) {
 
       <div className="fgroup" style={{ minWidth: 150 }}>
         <div className="fcap">Comparar</div>
-        <SwitchToggle label="Propuesta 2027" on={showProp} color="var(--amsa-yellow)"
+        <SwitchToggle label="Presupuesto 2027" on={showProp} color="var(--amsa-yellow)"
           onClick={() => set(showProp ? { showProp: false, donutMetric: 'real' } : { showProp: true })} />
       </div>
 
@@ -315,9 +354,9 @@ function KpiCards({ kpis, unit }) {
   return (
     <div className="kpis">
       {kpis.map((k, i) => (
-        <div key={i} style={{ position: 'relative' }}
+        <div key={i} style={{ position: 'relative', display: 'flex' }}
           onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(-1)}>
-          <div className={'kcard ' + (k.status || '')} style={k.tooltip ? { cursor: 'help' } : undefined}>
+          <div className={'kcard ' + (k.status || '')} style={{ flex: 1, ...(k.tooltip ? { cursor: 'help' } : {}) }}>
             <span className="strip" style={k.color ? { background: k.color } : undefined}></span>
             <div className="klbl">{k.label}</div>
             <div className="kval tnum" style={k.color ? { color: k.color } : undefined}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</div>

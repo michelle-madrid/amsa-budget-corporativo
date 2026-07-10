@@ -37,14 +37,14 @@ function BarYears({ series, unit, decimals, showProp }) {
   // 2026 FY (presupuesto anual): SOLO Ppto, sin Real (barra de presupuesto).
   if (series['2026fy'] && series['2026fy'].plan)
     rows.push({ y: '2026 FY', plan: series['2026fy'].plan, fyBudget: true });
-  // La barra de Propuesta 2027 solo aparece con el switch activado (capa aditiva).
-  if (showProp) rows.push({ y: 'Prop 27', prop: series[2027].prop, prop27: true });
+  // La barra de Presupuesto 2027 solo aparece con el switch activado (capa aditiva).
+  if (showProp) rows.push({ y: 'Ppto 27', prop: series[2027].prop, prop27: true });
   const max = Math.max(1, ...rows.flatMap(r => [r.real || 0, r.plan || 0, r.prop || 0]));
   const [boxRef, boxW] = useBoxWidth(780);
   const W = Math.max(360, Math.round(boxW / CHART_SCALE)), H = 150, padL = 26, padB = 24, padT = 10;
   const innerH = H - padB - padT;
   const groupW = (W - padL) / rows.length;
-  const div = unit === 'num' ? 1 : unit === 'kUSD' ? 1e3 : 1e6;
+  const div = (unit === 'num' || unit === 'USD') ? 1 : unit === 'kUSD' ? 1e3 : 1e6;
 
   const yTicks = 4;
   const ticks = Array.from({ length: yTicks + 1 }, (_, i) => (max / yTicks) * i);
