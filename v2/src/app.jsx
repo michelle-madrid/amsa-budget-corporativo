@@ -983,13 +983,11 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
                 </span>
               </span>
             </span>
-            <button type="button" onClick={expandAll}
+            {/* Un solo botón toggle: expande si todo está colapsado, colapsa si hay algo abierto. */}
+            <button type="button" onClick={() => expanded.size ? collapseAll() : expandAll()}
+              title={expanded.size ? 'Colapsar todas las filas' : 'Expandir todas las filas'}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ⤓ Expandir todo
-            </button>
-            <button type="button" onClick={collapseAll}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ⤒ Colapsar todo
+              {expanded.size ? '⤒ Colapsar todo' : '⤓ Expandir todo'}
             </button>
           </div>
         </div>
