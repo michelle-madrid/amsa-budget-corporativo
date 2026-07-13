@@ -64,22 +64,32 @@ function _xlsx(sheetName, headers, rows) {
 function DictView(props) {
   const A = window.CORP;
   const { vpov, setVpov, nameov, setNameov } = props; // estado elevado al App: al editar, el Dashboard se reagrupa solo
+  const cecoNames = props.cecoNames || { ger: {}, dceco: {} };   // renombres POR CECO (Gerencia y Desc. CECO)
+  const setCecoNames = props.setCecoNames || (() => {});
   const cecoMode = props.cecoMode || 'new';            // Estructura CECOS (Nueva/Antigua) — el Diccionario refleja el mapa activo
   const onCecoMode = props.onCecoMode || (() => {});
   const [q, setQ] = React.useState('');
   const [editCeco, setEditCeco] = React.useState(null);
   const [editGer, setEditGer] = React.useState(null);   // ceco de la fila cuya Gerencia se edita
+  const [editDceco, setEditDceco] = React.useState(null); // ceco cuya Desc. CECO se edita
   const [editItem, setEditItem] = React.useState(null); // clave del Ítem que se edita
   const [openCats, setOpenCats] = React.useState(() => new Set()); // divisiones expandidas (acordeón)
   const [catSel, setCatSel] = React.useState([]); // filtro por Clasificación del Gasto ([] = todas)
   const ql = q.trim().toLowerCase();
-  // Renombrar Gerencia / Ítem: el override va keyed por la clave estable (no por
-  // CECO). Si el valor queda vacío o igual al nombre base, se elimina el override.
-  const setGerName = (gerKey, val) => setNameov(o => {
+  // Renombrar Gerencia y Desc. CECO: override POR CECO (afecta solo a ese CECO). Si el valor
+  // queda vacío o igual al original, se quita el override.
+  const setGerName = (ceco, base, val) => setCecoNames(o => {
     const ger = { ...(o.ger || {}) }; const v = (val || '').trim();
-    if (!v || v === A.baseGer(gerKey)) delete ger[gerKey]; else ger[gerKey] = v;
+    if (!v || v === base) delete ger[ceco]; else ger[ceco] = v;
     return { ...o, ger };
   });
+  const setDcecoName = (ceco, base, val) => setCecoNames(o => {
+    const dceco = { ...(o.dceco || {}) }; const v = (val || '').trim();
+    if (!v || v === base) delete dceco[ceco]; else dceco[ceco] = v;
+    return { ...o, dceco };
+  });
+  // Renombrar Ítem Relevante: override compartido por clave de Ítem (afecta a todos los CECO
+  // con ese Ítem, que es el comportamiento deseado para los ítems).
   const setItemName = (itemKey, val) => setNameov(o => {
     const item = { ...(o.item || {}) }; const v = (val || '').trim();
     if (!v || v === A.baseItem(itemKey)) delete item[itemKey]; else item[itemKey] = v;
@@ -88,7 +98,7 @@ function DictView(props) {
   const cecos = (window.CORP_DICT && window.CORP_DICT.cecos) || [];
   const vpKeys = Array.from(new Set(cecos.map(r => r.v))).sort((a, b) => A.dispVP(a).localeCompare(A.dispVP(b), 'es'));
   const setVp = (ceco, vpKey, origV) => setVpov(o => { const n = { ...o }; if (!vpKey || vpKey === origV) delete n[ceco]; else n[ceco] = vpKey; return n; });
-  const gerOv = nameov.ger || {};
+  const gerCeco = cecoNames.ger || {}, dcecoCeco = cecoNames.dceco || {};   // overrides POR CECO
   // Alias de Gerencia: clave canónica → [nombres crudos como venían en los archivos].
   // Se muestran como sub-filas bajo el CECO cuya Gerencia es esa clave canónica.
   const aliasByCanon = {};
@@ -101,7 +111,12 @@ function DictView(props) {
   const cecoCat = r => r.cl || (String(r.c || '').startsWith('1000') ? 'Gastos Centro Corporativo' : 'Gastos Distribuibles');
   const allRows = cecos.map(r => {
     const vpKey = vpov[r.c] || r.v;
-    return { ceco: r.c, cat: cecoCat(r), gerKey: r.g, ger: A.dispGer(r.g), gerOverridden: !!gerOv[r.g], vpKey, vp: A.dispVP(vpKey), origV: r.v, overridden: !!vpov[r.c], aliases: aliasByCanon[r.g] || null, tc: r.tc || '—', ap: r.ap || '—' };
+    const gerBase = A.dispGer(r.g), dcecoBase = r.d || r.c;
+    return { ceco: r.c, cat: cecoCat(r), gerKey: r.g,
+      ger: gerCeco[r.c] || gerBase, gerBase, gerOverridden: !!gerCeco[r.c],
+      dceco: dcecoCeco[r.c] || dcecoBase, dcecoBase, dcecoOverridden: !!dcecoCeco[r.c],
+      vpKey, vp: A.dispVP(vpKey), origV: r.v, overridden: !!vpov[r.c],
+      aliases: aliasByCanon[r.g] || null, tc: r.tc || '—', ap: r.ap || '—' };
   });
   // Opciones del filtro por Clasificación del Gasto (todas las divisiones, con su conteo).
   const catCountAll = {}; allRows.forEach(r => { catCountAll[r.cat] = (catCountAll[r.cat] || 0) + 1; });
@@ -110,7 +125,7 @@ function DictView(props) {
     .map(c => ({ value: c, label: `${c} (${catCountAll[c]})` }));
   const catSet = catSel.length ? new Set(catSel) : null;
   const cecoRows = allRows.filter(r => (!catSet || catSet.has(r.cat)) &&
-    (!ql || r.ceco.toLowerCase().includes(ql) || r.ger.toLowerCase().includes(ql) || r.vp.toLowerCase().includes(ql) || r.cat.toLowerCase().includes(ql) || (r.aliases && r.aliases.some(n => n.toLowerCase().includes(ql)))));
+    (!ql || r.ceco.toLowerCase().includes(ql) || r.dceco.toLowerCase().includes(ql) || r.ger.toLowerCase().includes(ql) || r.vp.toLowerCase().includes(ql) || r.cat.toLowerCase().includes(ql) || (r.aliases && r.aliases.some(n => n.toLowerCase().includes(ql)))));
   // Agrupa por Clasificación del Gasto; divisiones ordenadas por cantidad de CECOs (desc).
   const catCount = {}; cecoRows.forEach(r => { catCount[r.cat] = (catCount[r.cat] || 0) + 1; });
   const cats = Array.from(new Set(cecoRows.map(r => r.cat))).sort((a, b) => catCount[b] - catCount[a] || a.localeCompare(b, 'es'));
@@ -132,7 +147,8 @@ function DictView(props) {
     .filter(r => !ql || r.name.toLowerCase().includes(ql) || r.key.toLowerCase().includes(ql) || (r.code && String(r.code).toLowerCase().includes(ql)))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const nItemOver = Object.keys(itemOv).length;
-  const nGerOver = Object.keys(gerOv).length;
+  const nGerOver = Object.keys(gerCeco).length;
+  const nDcecoOver = Object.keys(dcecoCeco).length;
   const th = { textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 700, letterSpacing: '.03em', color: '#fff', background: 'var(--amsa-teal-deep)', position: 'sticky', top: 0, zIndex: 1 };
   const td = { padding: '6px 12px', fontSize: 12.5, borderBottom: '1px solid var(--line-soft)', color: 'var(--ink)' };
   const foot = { padding: '7px 12px', fontSize: 11, color: 'var(--fg-muted)', borderTop: '1px solid var(--line-soft)' };
@@ -142,7 +158,7 @@ function DictView(props) {
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, margin: '4px 0 14px' }}>
         <div>
           <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>Diccionario de códigos</h2>
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>CECO → Gerencia (renombrable) y Vicepresidencia (editable) · agrupado por Clasificación del Gasto · Ítem Relevante (renombrable)</div>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>CECO · Desc. CECO y Gerencia (renombrables por CECO) · Vicepresidencia (editable) · agrupado por Clasificación del Gasto · Ítem Relevante (renombrable)</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -175,7 +191,7 @@ function DictView(props) {
         <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ maxHeight: 580, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={{ ...th, width: 110 }}>CECO</th><th style={th}>Gerencia</th><th style={th}>Vicepresidencia</th><th style={{ ...th, width: 96 }}>Tipo Costo</th><th style={{ ...th, width: 74 }}>¿Aplica?</th></tr></thead>
+              <thead><tr><th style={{ ...th, width: 176 }}>CECO · Desc. CECO</th><th style={th}>Gerencia</th><th style={th}>Vicepresidencia</th><th style={{ ...th, width: 96 }}>Tipo Costo</th><th style={{ ...th, width: 74 }}>¿Aplica?</th></tr></thead>
               <tbody>
                 {cats.map(cat => {
                   const open = effOpen.has(cat);
@@ -191,18 +207,31 @@ function DictView(props) {
                     {open && rowsOfCat.map(r => (
                       <React.Fragment key={r.ceco}>
                       <tr style={r.overridden ? { background: 'var(--accent-wash)' } : undefined}>
-                        <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.ceco}</td>
+                        <td style={td}>
+                          <div style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.ceco}</div>
+                          {editDceco === r.ceco
+                            ? <input autoFocus type="text" defaultValue={r.dceco}
+                                onBlur={e => { setDcecoName(r.ceco, r.dcecoBase, e.target.value); setEditDceco(null); }}
+                                onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditDceco(null); }}
+                                style={{ width: '100%', height: 24, marginTop: 3, border: '1px solid var(--amsa-teal)', borderRadius: 5, fontSize: 11.5, fontFamily: 'var(--font-sans)', color: 'var(--ink)', background: '#fff', padding: '0 6px', boxSizing: 'border-box' }} />
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 1, fontSize: 11, color: 'var(--fg-muted)' }}>
+                                <span style={r.dcecoOverridden ? { fontWeight: 700, color: 'var(--accent-ink)' } : undefined}>{r.dceco}</span>
+                                {r.dcecoOverridden && <span title={'Original: ' + r.dcecoBase} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
+                                <button title="Renombrar Desc. CECO (solo este CECO)" onClick={() => setEditDceco(r.ceco)} style={iconBtn}>✎</button>
+                                {r.dcecoOverridden && <button title="Restablecer nombre" onClick={() => setDcecoName(r.ceco, r.dcecoBase, null)} style={iconBtn}>↺</button>}
+                              </span>}
+                        </td>
                         <td style={td}>
                           {editGer === r.ceco
                             ? <input autoFocus type="text" defaultValue={r.ger}
-                                onBlur={e => { setGerName(r.gerKey, e.target.value); setEditGer(null); }}
+                                onBlur={e => { setGerName(r.ceco, r.gerBase, e.target.value); setEditGer(null); }}
                                 onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditGer(null); }}
                                 style={{ width: '100%', height: 26, border: '1px solid var(--amsa-teal)', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', background: '#fff', padding: '0 6px', boxSizing: 'border-box' }} />
                             : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                 <span style={r.gerOverridden ? { fontWeight: 700, color: 'var(--accent-ink)' } : undefined}>{r.ger}</span>
-                                {r.gerOverridden && <span title={'Original: ' + A.baseGer(r.gerKey)} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
-                                <button title="Renombrar Gerencia" onClick={() => setEditGer(r.ceco)} style={iconBtn}>✎</button>
-                                {r.gerOverridden && <button title="Restablecer nombre" onClick={() => setGerName(r.gerKey, null)} style={iconBtn}>↺</button>}
+                                {r.gerOverridden && <span title={'Original: ' + r.gerBase} style={{ fontSize: 9, color: 'var(--amsa-yellow)' }}>●</span>}
+                                <button title="Renombrar Gerencia (solo este CECO)" onClick={() => setEditGer(r.ceco)} style={iconBtn}>✎</button>
+                                {r.gerOverridden && <button title="Restablecer nombre" onClick={() => setGerName(r.ceco, r.gerBase, null)} style={iconBtn}>↺</button>}
                               </span>}
                         </td>
                         <td style={td}>
@@ -245,8 +274,8 @@ function DictView(props) {
             </table>
           </div>
           <div style={{ ...foot, display: 'flex', justifyContent: 'space-between' }}>
-            <span>{cecoRows.length} CECO{nOver > 0 ? ` · ${nOver} con VP reasignada` : ''}{nGerOver > 0 ? ` · ${nGerOver} Gerencia renombrada${nGerOver > 1 ? 's' : ''}` : ''}</span>
-            {(nOver > 0 || nGerOver > 0) && <button onClick={() => { setVpov({}); setNameov(o => ({ ...o, ger: {} })); }} style={{ ...iconBtn, color: 'var(--amsa-teal)', fontWeight: 600 }}>Restablecer todo</button>}
+            <span>{cecoRows.length} CECO{nOver > 0 ? ` · ${nOver} con VP reasignada` : ''}{nGerOver > 0 ? ` · ${nGerOver} Gerencia renombrada${nGerOver > 1 ? 's' : ''}` : ''}{nDcecoOver > 0 ? ` · ${nDcecoOver} Desc. CECO renombrada${nDcecoOver > 1 ? 's' : ''}` : ''}</span>
+            {(nOver > 0 || nGerOver > 0 || nDcecoOver > 0) && <button onClick={() => { setVpov({}); setCecoNames({ ger: {}, dceco: {} }); }} style={{ ...iconBtn, color: 'var(--amsa-teal)', fontWeight: 600 }}>Restablecer todo</button>}
           </div>
         </div>
         <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
@@ -1439,6 +1468,13 @@ function App() {
   useEffect(() => { try { localStorage.setItem('ada_vpov_v1', JSON.stringify(vpov)); } catch (e) {} }, [vpov]);
   // Aplica el override a los registros ANTES de reconstruir árbol/series/donut.
   useMemo(() => A.applyVpOverrides(vpov), [vpov]);
+  // Renombre POR CECO de Gerencia y Desc. CECO (editable en el Diccionario). Muta rec.ger /
+  // rec.dceco solo del CECO editado → el cambio afecta únicamente a ese CECO. Persiste.
+  const [cecoNames, setCecoNames] = useState(() => {
+    try { const s = localStorage.getItem('ada_ceconames_v1'); const o = s ? JSON.parse(s) : {}; return { ger: o.ger || {}, dceco: o.dceco || {} }; } catch (e) { return { ger: {}, dceco: {} }; }
+  });
+  useEffect(() => { try { localStorage.setItem('ada_ceconames_v1', JSON.stringify(cecoNames)); } catch (e) {} }, [cecoNames]);
+  useMemo(() => A.applyCecoNameOverrides(cecoNames), [cecoNames]);
   // Renombres EDITABLES de Gerencia e Ítem (nombres truncados de la base). Solo
   // afectan el display (dispGer/dispItem), keyed por la clave estable → un
   // refresco de la base conserva los renombres. Persisten en localStorage.
@@ -1482,8 +1518,8 @@ function App() {
   // Toggles globales del modelo: valor ('n' Normal | 'a' Ajustada 2027) · CECOS ('new'|'old').
   const [valMode, setValModeS] = useState('n');
   const [cecoMode, setCecoModeS] = useState('new');   // Estructura CECOS por defecto: Nueva
-  const onValMode = useCallback(m => { A.setValMode(m); A.applyVpOverrides(vpov); setValModeS(m); }, [vpov]);
-  const onCecoMode = useCallback(m => { A.setCecoMode(m); A.applyVpOverrides(vpov); setCecoModeS(m); }, [vpov]);
+  const onValMode = useCallback(m => { A.setValMode(m); A.applyVpOverrides(vpov); A.applyCecoNameOverrides(cecoNames); setValModeS(m); }, [vpov, cecoNames]);
+  const onCecoMode = useCallback(m => { A.setCecoMode(m); A.applyVpOverrides(vpov); A.applyCecoNameOverrides(cecoNames); setCecoModeS(m); }, [vpov, cecoNames]);
 
   const showProp = !!st.showProp;
   const histYears = st.years.filter(y => typeof y === 'number').sort((a, b) => a - b);
@@ -1505,7 +1541,7 @@ function App() {
     years: st.years, showProp, donutMetric: st.donutMetric, yearAgg: st.yearAgg, version: st.version, dataMode: st.dataMode,
     companies: st.companies, vps: st.vps, gers: st.gers, itemrels: st.itemrels, items: st.items, cecos: st.cecos, clacos: st.clacos, tcs: st.tcs, clases: st.clases, aps: st.aps, st: st.stMode, hidden: st.hidden,
     groupBy: groupDims, sort: st.sort, overrides, growth,
-  }), [st, showProp, overrides, vpov, valMode, cecoMode]);
+  }), [st, showProp, overrides, vpov, cecoNames, valMode, cecoMode]);
 
   const tree = useMemo(() => A.buildTree(opts), [opts]);
   const series = useMemo(() => A.annualSeries(opts), [opts]);
@@ -1763,7 +1799,7 @@ function App() {
           </button>
           <ColorPanel onApply={onColorApply} edit={editMode} />
         </div>
-        {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} cecoMode={cecoMode} onCecoMode={onCecoMode} />
+        {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} cecoNames={cecoNames} setCecoNames={setCecoNames} cecoMode={cecoMode} onCecoMode={onCecoMode} />
          : page === 'dotaciones' ? <DotacionesView />
          : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} onDec={v => setTweak('decimals', v)} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} st={st} set={set} />
          : <React.Fragment>

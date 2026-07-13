@@ -187,7 +187,7 @@
       return {
         id: i, src, comp, compania: _compName(m.comp), ceco: r.ceco, contra: r.contra || '(sin contrapartida)',
         _hidden: hidden,   // CECO fuera de la estructura activa → excluido del árbol/filtros
-        vp: m.vp, _vp0: m.vp, ger: m.ger, dceco: m.dceco || r.ceco, item: r.item,
+        vp: m.vp, _vp0: m.vp, ger: m.ger, _ger0: m.ger, dceco: m.dceco || r.ceco, _dceco0: m.dceco || r.ceco, item: r.item,
         // Ítem Relevante = Agrupación3 del CLACO (nivel padre del ítem/Agrupación4).
         itemrel: (V.itemRel && V.itemRel[r.item]) || r.item,
         // Tipo Costo (C1/C2/C3/TRASPASOS) desde el CLACO (V.itemTc), no del CECO.
@@ -231,7 +231,7 @@
     const cm = _cmap();
     window.CORP_DICT = { cecos: Object.keys(cm).map(ceco => {
       const m = cm[ceco];
-      return { c: ceco, g: m.ger, v: m.vp, tc: m.tc || null, ap: m.ap || null, cl: m.cl || null };
+      return { c: ceco, g: m.ger, v: m.vp, d: m.dceco || ceco, tc: m.tc || null, ap: m.ap || null, cl: m.cl || null };
     }) };
   }
   function rebuild() {
@@ -847,10 +847,22 @@
     records.forEach(r => { r.vp = (r.ceco && ovByCeco[r.ceco]) || r._vp0; });
   }
 
+  // Renombre POR CECO de Gerencia y Desc. CECO (editable en el Diccionario). A diferencia del
+  // rename por nombre (compartido), acá el valor es texto libre y afecta SOLO al CECO editado:
+  // muta rec.ger / rec.dceco de ese CECO (así el árbol lo agrupa/muestra con su nuevo nombre).
+  // ov = { ger: {ceco: nombre}, dceco: {ceco: nombre} }. Sin override → original (_ger0/_dceco0).
+  function applyCecoNameOverrides(ov) {
+    const g = (ov && ov.ger) || {}, d = (ov && ov.dceco) || {};
+    records.forEach(r => {
+      r.ger = (r.ceco && g[r.ceco]) || r._ger0;
+      r.dceco = (r.ceco && d[r.ceco]) || r._dceco0;
+    });
+  }
+
   window.CORP = {
     V, D: Object.assign({ vps: [], gers: [] }, V),
     records, corpRecords, distRecords, dotRecords, MESES, COMPANIAS, VISTAS, VERSIONES,
-    buildTree, annualSeries, distribuible, activeRecords, efectoMoneda, dimsFor, clacosInScope, applyVpOverrides, kpiColor, kpiHex, color, theme, resetTheme,
+    buildTree, annualSeries, distribuible, activeRecords, efectoMoneda, dimsFor, clacosInScope, applyVpOverrides, applyCecoNameOverrides, kpiColor, kpiHex, color, theme, resetTheme,
     hasDetail, hasDetailFor, detailNodes, detailMatch,
     hasDetailP, hasDetailPFor, detailNodesP, detailMatchP,   // detalle Ppto/Forecast (Concepto Gasto › Actividad)
     hasST: () => records.some(r => r.st),   // ¿hay registros Services & Tech? (para mostrar el filtro)
