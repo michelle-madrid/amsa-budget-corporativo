@@ -84,7 +84,7 @@ FCST_SHEET = "Forecast 5+7 Unpivot"
 # Forecast 5+7 2026 (hoja Unpivot): CECO=2 · Clase Costo(CLACO)=4 · Valor=15 · Valor USD 2027=16
 FC_CECO, FC_CLACO, FC_VALN, FC_VALA = 2, 4, 15, 16
 FC_CG, FC_ACT = 8, 9   # Forecast: Concepto Gasto (col8) · Actividad (col9)
-PPTO27_FILE = os.path.join(UP, "EXPORT_PPTO27_V5.XLSX")
+PPTO27_FILE = os.path.join(UP, "EXPORT_PPTO27_V6.XLSX")
 PPTO27_SHEET = "Sheet1"
 # Ppto 2027 (hoja ancha): CECO=2 · Clase Costo(CLACO)=4 · Total-2027=26 (USD, ya en moneda 2027).
 P27_CECO, P27_CLACO, P27_TOTAL = 2, 4, 26
@@ -154,6 +154,7 @@ def leer_clacos():
     item2rel, rel2name, item2clas = {}, {}, {}
     st_names = set()   # nombres (Agrupación5, col10) de los CLACOs Services & Tech → para cruzar el Real
     name2claco = {}    # nombre (Desc.CLACO / Agrupación5) → código CLACO, para cruzar el Real por código
+    claco2name = {}    # código CLACO → Desc. CLACO (col13), para mostrar la descripción en el front
     # GP_CO1: item=Ag4(7)/nombre(8) · rel=Ag3(5)/nombre(6) · tc=Ag2(3) · Ag5=9/10 · CLACO=12 · Desc.CLACO=13 · clasCuenta=16
     it = wb["GP_CO1"].iter_rows(values_only=True); next(it)
     for r in it:
@@ -163,6 +164,7 @@ def leer_clacos():
         if claco:
             if 13 < len(r) and _txt(r[13]):
                 name2claco.setdefault(_txt(r[13]).lower(), claco)   # Desc.CLACO → código
+                claco2name.setdefault(claco, _txt(r[13]))           # código → Desc.CLACO
             if 10 < len(r) and _txt(r[10]):
                 name2claco.setdefault(_txt(r[10]).lower(), claco)   # Agrupación5 → código (nombre que usa el Real)
         item = _txt(r[7]) if 7 < len(r) else ""
@@ -193,8 +195,9 @@ def leer_clacos():
             name2item.setdefault(_txt(r[7]).lower(), item)
             if claco:
                 name2claco.setdefault(_txt(r[7]).lower(), claco)   # Desc (GP_CO2P) → código
+                claco2name.setdefault(claco, _txt(r[7]))           # código → Desc (complementa GP_CO1)
     wb.close()
-    return code2item, name2item, item2name, item2tc, item2rel, rel2name, item2clas, st_names, name2claco
+    return code2item, name2item, item2name, item2tc, item2rel, rel2name, item2clas, st_names, name2claco, claco2name
 
 
 def leer_cecos(sheet):
@@ -609,14 +612,15 @@ def construir_registros(agg):
     return records
 
 
-def escribir_parquet(agg):
+def escribir_parquet(agg, write=True):
     rows = []
     for (ceco, item, contra, bucket, claco), v in agg.items():
         rows.append(dict(ceco=ceco, item=item, contra=contra, bucket=bucket, claco=claco,
                          real_n=v[0], real_a=v[1], plan_n=v[2], plan_a=v[3]))
     df = pd.DataFrame(rows, columns=["ceco", "item", "contra", "bucket", "claco", "real_n", "real_a", "plan_n", "plan_a"])
-    df.to_parquet(PARQUET, index=False)
-    log(f"  Parquet: {PARQUET} ({len(df)} filas)")
+    if write:   # en modo solo_v3 no se toca el parquet (intermedio de v2)
+        df.to_parquet(PARQUET, index=False)
+        log(f"  Parquet: {PARQUET} ({len(df)} filas)")
     return df
 
 
@@ -629,11 +633,15 @@ def _logo_data_uri():
     return "data:image/png;base64," + b64
 
 
-def construir_data_js(records, itemNames, itemTc, cecoNew, cecoOld, comps, dot_records, itemRel=None, relNames=None, itemClas=None):
+def construir_data_js(records, itemNames, itemTc, cecoNew, cecoOld, comps, dot_records, itemRel=None, relNames=None, itemClas=None, clacoNames=None):
     j = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))
     items = sorted({r["item"] for r in records})
+    # Solo los nombres de CLACO presentes en los registros (evita cargar el diccionario completo).
+    clacosUsados = {r["claco"] for r in records if r.get("claco")}
+    clacoNames = {c: n for c, n in (clacoNames or {}).items() if c in clacosUsados}
     v2 = {"records": records, "items": items, "itemNames": itemNames, "itemTc": itemTc,
           "itemRel": itemRel or {}, "relNames": relNames or {}, "itemClas": itemClas or {},
+          "clacoNames": clacoNames,
           "cecoNew": cecoNew, "cecoOld": cecoOld, "comps": comps,
           "years": YEARS_HIST + [2026]}
     out = ("window.V2_DATA = " + j(v2) + ";\n" +
@@ -842,11 +850,14 @@ def _validar_jsx(html, archivos):
             log(f"    Babel OK: {name}")
 
 
-def embeber(data_js):
-    """Re-embebe código (src/*) + data.js en el HTML autocontenido, con respaldo + zip."""
+def embeber(data_js, write=True):
+    """Re-embebe código (src/*) + data.js en el HTML autocontenido y DEVUELVE el HTML resultante.
+    Con write=True además lo escribe a disco (respaldo .bak + zip). Con write=False (modo solo_v3)
+    NO toca el deliverable v2: el HTML embebido —con el código nuevo de src/— se usa solo en
+    memoria como base del v3, de modo que un cambio de CÓDIGO llega al v3 sin reescribir la v2."""
     if not os.path.isfile(HTML_PATH):
         log("  AVISO: no existe el HTML v2; se omite embebido (solo data_v2.js).")
-        return
+        return None
     import shutil
     import zipfile
     html = open(HTML_PATH, "r", encoding="utf-8", newline="").read()
@@ -912,26 +923,31 @@ def embeber(data_js):
     for uuid, (name, _isjsx) in ASSETS.items():
         html = _set_asset(html, uuid, open(os.path.join(SRC, name), encoding="utf-8").read())
     html = _set_asset(html, DATA_UUID, data_js)
-    shutil.copyfile(HTML_PATH, HTML_PATH + ".bak")
-    open(HTML_PATH, "w", encoding="utf-8", newline="").write(html)
-    zip_path = os.path.join(HERE, "Dashboard Corporativo v2.zip")
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(HTML_PATH, arcname=os.path.basename(HTML_PATH))
-        z.writestr("LEER - Como abrir.txt", "Doble clic en el HTML (Chrome/Edge/Firefox).")
-    log("  HTML v2 actualizado (código + data embebidos) · ZIP generado.")
+    if write:
+        shutil.copyfile(HTML_PATH, HTML_PATH + ".bak")
+        open(HTML_PATH, "w", encoding="utf-8", newline="").write(html)
+        zip_path = os.path.join(HERE, "Dashboard Corporativo v2.zip")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(HTML_PATH, arcname=os.path.basename(HTML_PATH))
+            z.writestr("LEER - Como abrir.txt", "Doble clic en el HTML (Chrome/Edge/Firefox).")
+        log("  HTML v2 actualizado (código + data embebidos) · ZIP generado.")
+    else:
+        log("  [solo v3] HTML v2 NO se re-escribe; su código+data (nuevos) van en memoria como base del v3.")
+    return html
 
 
-def construir_v3(data_js, det, detp=None):
-    """v3 = el HTML v2 ya embebido, pero con el DETALLE del gasto añadido a la data:
+def construir_v3(base_html, data_js, det, detp=None):
+    """v3 = el HTML v2 ya embebido (base_html, que trae el código+data nuevos), pero con el
+    DETALLE del gasto añadido a la data:
     · window.DET  = detalle Real (Contrapartida › Texto pedido › Denominación).
     · window.DETP = detalle Ppto/Forecast (Concepto Gasto › Actividad).
     El mismo código JSX los activa solo si existen. HTML más pesado (~7 MB), abre offline."""
-    if not os.path.isfile(HTML_PATH):
-        log("  AVISO: no existe el HTML v2; se omite v3.")
+    if not base_html:
+        log("  AVISO: no hay HTML base embebido; se omite v3.")
         return
     import zipfile
     os.makedirs(V3_DIR, exist_ok=True)
-    html = open(HTML_PATH, "r", encoding="utf-8", newline="").read()
+    html = base_html
     det_js = "window.DET=" + json.dumps(det, ensure_ascii=False, separators=(",", ":")) + ";"
     if detp is not None:
         det_js += "\nwindow.DETP=" + json.dumps(detp, ensure_ascii=False, separators=(",", ":")) + ";"
@@ -949,10 +965,12 @@ def construir_v3(data_js, det, detp=None):
 
 
 # ===========================================================================
-def main():
-    log("=== Construir Dashboard Corporativo v2 ===")
+def main(solo_v3=False):
+    # solo_v3=True: regenera ÚNICAMENTE el v3 (re-embebe en memoria el código actual de src/ +
+    # la data y lo vuelca al v3). NO escribe el HTML v2 ni sus intermedios (parquet, data.js).
+    log("=== Construir Dashboard Corporativo " + ("v3 (solo v3)" if solo_v3 else "v2") + " ===")
     log("Leyendo diccionarios…")
-    code2item, name2item, item2name, item2tc, item2rel, rel2name, item2clas, st_names, name2claco = leer_clacos()
+    code2item, name2item, item2name, item2tc, item2rel, rel2name, item2clas, st_names, name2claco, claco2name = leer_clacos()
     cecoNew = leer_cecos("CECOS Corporativo Nueva")
     cecoOld = leer_cecos("CECOS Corporativo")
     comps = leer_companias()
@@ -972,7 +990,7 @@ def main():
         return True
     log(f"  Alcance: TODOS los CECOs (sin la regla 'solo corporativos con Real'). realcecos={len(realcecos)}")
 
-    df = escribir_parquet(agg)
+    df = escribir_parquet(agg, write=not solo_v3)
     records = construir_registros(agg)
 
     # Forecast 5+7 2026 (anual): pseudo-registros con contra "(Forecast)" (se oculta en la
@@ -1032,25 +1050,29 @@ def main():
 
     log("Leyendo Dotaciones…")
     dot_records, dot_tidy = leer_dotaciones()
-    if dot_tidy:
+    if dot_tidy and not solo_v3:
         pd.DataFrame(dot_tidy, columns=["src", "vp", "ger", "year", "period", "real", "plan"]) \
             .to_parquet(os.path.join(HERE, "dotaciones_v2.parquet"), index=False)
 
-    data_js = construir_data_js(records, itemNames, itemTc, cecoNew, cecoOld, comps, dot_records, itemRel, relNames, itemClas)
-    open(DATA_JS, "w", encoding="utf-8", newline="").write(data_js)
-    log(f"  data.js: {DATA_JS} ({len(records)} registros ceco×ítem)")
+    data_js = construir_data_js(records, itemNames, itemTc, cecoNew, cecoOld, comps, dot_records, itemRel, relNames, itemClas, claco2name)
+    if not solo_v3:
+        open(DATA_JS, "w", encoding="utf-8", newline="").write(data_js)
+        log(f"  data.js: {DATA_JS} ({len(records)} registros ceco×ítem)")
 
     # Validación rápida (totales en MM USD)
     _validar(df, cecoNew, comps)
 
-    embeber(data_js)
+    # Se re-embebe SIEMPRE el código actual de src/ + la data (así el v3 toma los cambios de
+    # código). En modo solo_v3, write=False: el HTML v2 NO se escribe en disco, su versión
+    # embebida se usa solo en memoria como base del v3 (el deliverable v2 queda intacto).
+    base_html = embeber(data_js, write=not solo_v3)
 
     # v3 = misma app + DETALLE del gasto embebido: Real (Contrapartida › Texto pedido ›
     # Denominación) y Ppto/Forecast (Concepto Gasto › Actividad).
     log("Construyendo detalle v3…")
     det = leer_detalle(name2item, _en_alcance, st_names)
     detp = leer_detalle_pf(code2item, _en_alcance)
-    construir_v3(data_js, det, detp)
+    construir_v3(base_html, data_js, det, detp)
     log("\n✓ LISTO.")
 
 
@@ -1063,4 +1085,5 @@ def _validar(df, cecomap, comps):
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(solo_v3="--solo-v3" in sys.argv)

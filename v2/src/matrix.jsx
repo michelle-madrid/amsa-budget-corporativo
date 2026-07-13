@@ -6,7 +6,7 @@ function parseLocaleNum(s) {
   if (str.indexOf(',') !== -1) { str = str.replace(/\./g, '').replace(',', '.'); }
   return parseFloat(str);
 }
-const DISP_BY = { vp: 'dispVP', ger: 'dispGer', dceco: 'dispDceco', itemrel: 'dispItemRel', item: 'dispItem', ceco: 'dispCeco', contra: 'dispContra' };
+const DISP_BY = { vp: 'dispVP', ger: 'dispGer', dceco: 'dispDceco', itemrel: 'dispItemRel', item: 'dispItem', ceco: 'dispCeco', contra: 'dispContra', claco: 'dispClaco' };
 const DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', ceco: 'CECO', contra: 'Contrapartida', texto: 'Texto pedido', denom: 'Denominación', concepto: 'Concepto Gasto', actividad: 'Actividad' };
 // Familia de cada dimensión de detalle (para atenuar columnas que no aplican): REAL vs PPTO.
 const DIM_FAM = { contra: 'real', texto: 'real', denom: 'real', concepto: 'ppto', actividad: 'ppto' };
@@ -116,9 +116,10 @@ function Twig({ row, expanded, onToggle, dims, onPick, active, onHide }) {
   const A = window.CORP;
   const dim = row.dim || dims[row.level - 1];
   const name = (A[DISP_BY[dim]] || (x => x))(row.node.name);
-  // Código al lado cuando corresponde: Ítem → Cód_Agrupación2 (CLACO) · CECO → código CECO.
+  // Código al lado cuando corresponde: Ítem → Cód_Agrupación2 (CLACO) · CECO → código CECO ·
+  // Desc. CLACO → código CLACO (la clave del nivel ya ES el código).
   const code = (dim === 'item' || dim === 'itemrel') ? (A.itemCode ? A.itemCode(row.node.name) : null)
-             : dim === 'ceco' ? row.node.name
+             : (dim === 'ceco' || dim === 'claco') ? row.node.name
              : (dim === 'denom' || dim === 'texto') ? ((row.doc && row.doc !== '—') ? 'Doc ' + row.doc : null)   // Documento compra (en la hoja del detalle)
              : null;
   const showCode = code && String(code) !== String(name);
@@ -140,7 +141,7 @@ function Twig({ row, expanded, onToggle, dims, onPick, active, onHide }) {
         } : undefined}
       >{name}</span>
       {showCode ? <span style={{ marginLeft: 7, fontSize: 10.5, color: 'var(--fg-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums' }}>{code}</span> : null}
-      {(onHide && ['vp', 'ger', 'dceco', 'ceco', 'itemrel', 'item', 'contra'].includes(dim)) ? (
+      {(onHide && ['vp', 'ger', 'dceco', 'ceco', 'itemrel', 'item', 'claco', 'contra'].includes(dim)) ? (
         <button className="rowhide" title={'Ocultar «' + name + '» de la tabla'}
           onClick={e => { e.stopPropagation(); onHide(dim, row.node.name); }}>⊘</button>
       ) : null}

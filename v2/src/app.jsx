@@ -310,7 +310,7 @@ const RESUMEN_COL_CATALOG = [
   // ── Forecast ──
   { key: 'fcst26', kind: 'fcst', cat: 'Forecast', label: 'Forecast 5+7 2026' },
 ];
-const RESUMEN_DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', ceco: 'CECO', contra: 'Contrapartida' };
+const RESUMEN_DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', claco: 'Desc. CLACO', ceco: 'CECO', contra: 'Contrapartida' };
 // Estructuras de la Tabla Resumen. El Ítem Relevante (Agrupación3) va como padre del
 // Ítem (Agrupación4). Las que terminan en CECO/Contrapartida = detalle máximo.
 // Selección por defecto de Clasificación Cuenta: TODAS menos "Mano de Obra".
@@ -355,8 +355,11 @@ function ResumenView({ overrides, unit, dec, valMode, cecoMode, onValMode, onCec
   const [distPopOpen, setDistPopOpen] = React.useState(false);  // popover de compañías anclado a "Distribuible"
   const [draftComp, setDraftComp] = React.useState([]);         // selección en borrador dentro del popover
   const [groupMode, setGroupMode] = React.useState('orgcc'); // estructuras con detalle hasta Contrapartida
-  const [dimOrder, setDimOrder] = React.useState(null);      // orden custom (arrastrando el breadcrumb); null = seguir preset
-  const [hiddenDims, setHiddenDims] = React.useState(() => new Set(['contra'])); // niveles excluidos (× ) — Contrapartida oculta por defecto
+  // Estructura por defecto (pedida): VP › Desc. CECO › CECO › Ítem Relevante › Ítem › Desc. CLACO
+  // (Gerencia y Contrapartida quedan disponibles como chips "+"). Es un orden custom (no coincide
+  // con un preset), así que arranca fijado en dimOrder; el selector de Estructura lo resetea.
+  const [dimOrder, setDimOrder] = React.useState(['vp', 'ger', 'dceco', 'ceco', 'itemrel', 'item', 'claco', 'contra']);
+  const [hiddenDims, setHiddenDims] = React.useState(() => new Set(['ger', 'contra'])); // niveles excluidos (× ) — Gerencia y Contrapartida ocultos por defecto (se agregan con "+")
   const [dragDim, setDragDim] = React.useState(null);        // nivel que se está arrastrando
   const [detOrder, setDetOrder] = React.useState('td');      // detalle: 'td' Texto pedido›Denominación · 'dt' al revés
   const [showDetP, setShowDetP] = React.useState(true);      // mostrar el detalle Ppto/Fcst (Concepto Gasto › Actividad)
@@ -439,7 +442,12 @@ function ResumenView({ overrides, unit, dec, valMode, cecoMode, onValMode, onCec
   const distOn = dataMode === 'dist' || dataMode === 'both';
   const setFlags = (c, d) => setDataMode(c && d ? 'both' : c ? 'corp' : d ? 'dist' : 'none');
 
-  const _baseDims = dimOrder || RESUMEN_DIMS[groupMode] || RESUMEN_DIMS.item;
+  // "Desc. CLACO" es un nivel OPCIONAL disponible en cualquier estructura: se inyecta tras
+  // "Ítem" (su padre natural) si no está ya, y arranca oculto (ver hiddenDims) → aparece como
+  // chip "+ Desc. CLACO" para agregarlo. Solo aquí (Tabla Resumen), no toca los presets compartidos.
+  const _rawBase = dimOrder || RESUMEN_DIMS[groupMode] || RESUMEN_DIMS.item;
+  const _baseDims = _rawBase.includes('claco') ? _rawBase
+    : (() => { const ii = _rawBase.indexOf('item'); const b = _rawBase.slice(); b.splice(ii < 0 ? b.length : ii + 1, 0, 'claco'); return b; })();
   const _structDims = _baseDims.filter(d => showCeco || (d !== 'ceco' && d !== 'dceco'));
   const dims = _structDims.filter(d => !hiddenDims.has(d));   // niveles activos (excluye los quitados con ×)
   const ghostDims = _structDims.filter(d => hiddenDims.has(d)); // quitados → se muestran como chips para re-agregar
@@ -604,6 +612,14 @@ function ResumenView({ overrides, unit, dec, valMode, cecoMode, onValMode, onCec
   // Filtro por código CECO: acotado a VP/Gerencia activas + los ya seleccionados (aunque queden fuera).
   const cecoOpts = [...new Set([...(dimsOpt.cecos || []), ...cecos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
   const clacoOpts = [...new Set([...(dimsOpt.clacos || []), ...clacos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));   // filtro por código CLACO (Clase de Costo)
+  // "Código CLACO": si hay algún otro filtro activo (VP/Gerencia/Ítem/CECO/…), se tildan los
+  // CLACOs que realmente se están mostrando (presentes tras el resto de filtros); sin otro
+  // filtro se deja "Todos" sin tildar (el usuario no eligió nada aún).
+  const clacoNarrowed = !!(vps.length || gers.length || itemrels.length || items.length || cecos.length || tcs.length || aps.length || (distOn && companias.length));
+  const clacoScope = React.useMemo(() => !clacoNarrowed ? [] : A.clacosInScope({
+    dataMode, companies: [], vps, gers, itemrels, items, tcs, clases,
+    companias: distOn ? companias : [], cecos, st: stMode, aps, hidden,
+  }), [clacoNarrowed, dataMode, vps, gers, itemrels, items, tcs, clases, companias, distOn, cecos, stMode, aps, hidden]);
   const compOpts = (dimsOpt.companias || []).map(v => ({ value: v, label: v }));
   // Color de marca por compañía (nombre → abrev → color de A.COMPANIAS; MLP/ANT/CEN/CMZ tienen color).
   const compColor = React.useMemo(() => {
@@ -719,7 +735,8 @@ function ResumenView({ overrides, unit, dec, valMode, cecoMode, onValMode, onCec
     <div className="fgroup grow" style={{ minWidth: 130 }} key="claco">
       <div style={cap}>Código CLACO</div>
       <div className="fctl">
-        <MultiSelect options={clacoOpts} selected={clacos} placeholder="Todos" searchable onChange={setClacos} />
+        <MultiSelect options={clacoOpts} selected={clacos} placeholder="Todos" searchable onChange={setClacos}
+          impliedAll={clacoNarrowed ? clacoScope : undefined} />
       </div>
     </div>,
     <div className="fgroup" style={{ minWidth: 128 }} key="tc">

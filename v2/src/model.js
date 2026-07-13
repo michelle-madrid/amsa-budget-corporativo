@@ -9,7 +9,7 @@
    ============================================================= */
 (function () {
   // ===== Datos v2: window.V2_DATA (registros CECO×Ítem con doble valor n/a + mapas de CECOS) =====
-  const V = window.V2_DATA || { records: [], items: [], itemNames: {}, cecoNew: {}, cecoOld: {}, comps: {} };
+  const V = window.V2_DATA || { records: [], items: [], itemNames: {}, clacoNames: {}, cecoNew: {}, cecoOld: {}, comps: {} };
   const DOT = window.DOT_DATA || { records: [] };   // Dotaciones (FTE) — Propios/Contratista
   // Modo de valor ('n' Normal | 'a' Ajustada 2027) y de CECOS ('new' | 'old'),
   // elegibles en la barra de filtros. Al cambiar se reconstruyen los registros.
@@ -584,7 +584,7 @@
 
     // Jerarquía configurable (ej. ['vp','ger','item'] o ['item','vp','ger']).
     const dims = (opts.groupBy && opts.groupBy.length) ? opts.groupBy : ['vp', 'ger', 'item'];
-    const DISPM = { vp: dispVP, ger: dispGer, dceco: n => n, itemrel: dispItemRel, item: dispItem, ceco: n => n, contra: n => n };
+    const DISPM = { vp: dispVP, ger: dispGer, dceco: n => n, itemrel: dispItemRel, item: dispItem, ceco: n => n, contra: n => n, claco: dispClaco };
 
     // Orden configurable por columna (key: name|real|version|dif|pct).
     const sort = opts.sort || { key: 'real', dir: 'desc' };
@@ -739,6 +739,8 @@
   function dispItem(n) { return _itemOv[n] || V.itemNames[n] || n; }
   // Ítem Relevante = Agrupación3 (nombre por V.relNames; la clave es el código Ag3).
   function dispItemRel(n) { return (V.relNames && V.relNames[n]) || V.itemNames[n] || n; }
+  // Desc. CLACO (Clase de Costo): la clave es el código; el nombre viene de V.clacoNames.
+  function dispClaco(n) { return (n && V.clacoNames && V.clacoNames[n]) || n || '(sin CLACO)'; }
   // El "código" del Ítem/Ítem Relevante ES la clave. '(sin ítem)' → null.
   function itemCode(n) { return (n && n !== '(sin ítem)') ? n : null; }
 
@@ -776,6 +778,15 @@
     clacos.sort((a, b) => a.localeCompare(b, 'es'));
     aps.sort((a, b) => a.localeCompare(b, 'es'));
     return { gers, items, itemrels, tcs, clases, companias, cecos, clacos, aps };
+  }
+
+  // CLACOs presentes tras aplicar TODOS los filtros MENOS el de CLACO (mismo predicado que la
+  // tabla). Sirve para tildar en el dropdown "Código CLACO" justo los que se están mostrando.
+  function clacosInScope(opts) {
+    const o = Object.assign({}, opts, { clacos: [] });
+    const set = new Set();
+    activeRecords(o).filter(_matchOpts(o)).forEach(r => { if (r.claco) set.add(r.claco); });
+    return [...set].sort((a, b) => a.localeCompare(b, 'es'));
   }
 
   // Resolución de colores del tema: traduce cualquier expresión CSS (var(--x),
@@ -839,11 +850,11 @@
   window.CORP = {
     V, D: Object.assign({ vps: [], gers: [] }, V),
     records, corpRecords, distRecords, dotRecords, MESES, COMPANIAS, VISTAS, VERSIONES,
-    buildTree, annualSeries, distribuible, activeRecords, efectoMoneda, dimsFor, applyVpOverrides, kpiColor, kpiHex, color, theme, resetTheme,
+    buildTree, annualSeries, distribuible, activeRecords, efectoMoneda, dimsFor, clacosInScope, applyVpOverrides, kpiColor, kpiHex, color, theme, resetTheme,
     hasDetail, hasDetailFor, detailNodes, detailMatch,
     hasDetailP, hasDetailPFor, detailNodesP, detailMatchP,   // detalle Ppto/Forecast (Concepto Gasto › Actividad)
     hasST: () => records.some(r => r.st),   // ¿hay registros Services & Tech? (para mostrar el filtro)
-    fmt, fmtPct, dispVP, dispGer, dispItem, dispItemRel, itemCode, applyNameOverrides, baseGer, baseItem,
+    fmt, fmtPct, dispVP, dispGer, dispItem, dispItemRel, dispClaco, itemCode, applyNameOverrides, baseGer, baseItem,
     setValMode, setCecoMode, getValMode: () => _valMode, getCecoMode: () => _cecoMode,
     recordById: (id) => records[id],
     derived, DEF_GROWTH, GER_ALIAS,

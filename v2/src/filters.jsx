@@ -2,7 +2,7 @@
 const { useState: useStateF, useRef: useRefF, useEffect: useEffectF } = React;
 
 /* ---------------- Multi-select dropdown ---------------- */
-function MultiSelect({ options, selected, onChange, placeholder, gold, searchable }) {
+function MultiSelect({ options, selected, onChange, placeholder, gold, searchable, impliedAll }) {
   const [open, setOpen] = useStateF(false);
   const [q, setQ] = useStateF('');
   const ref = useRefF(null);
@@ -12,10 +12,17 @@ function MultiSelect({ options, selected, onChange, placeholder, gold, searchabl
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
   const sel = new Set(selected);
+  // Sin selección explícita, si llega impliedAll (p.ej. los CLACOs en alcance según los OTROS
+  // filtros) esos se muestran TILDADOS: son "lo que se está mostrando". El primer destilde
+  // materializa la lista (deja de ser "todos" implícito) para poder excluir de a uno; si se
+  // vuelve a cubrir impliedAll completo, regresa a [] (todos implícito).
+  const implied = (!selected.length && impliedAll && impliedAll.length) ? impliedAll : null;
+  const checkedSet = implied ? new Set(implied) : sel;
   const toggle = (v) => {
-    const n = new Set(sel);
+    const n = new Set(checkedSet);
     n.has(v) ? n.delete(v) : n.add(v);
-    onChange([...n]);
+    if (impliedAll && impliedAll.length && n.size === impliedAll.length && impliedAll.every(x => n.has(x))) onChange([]);
+    else onChange([...n]);
   };
   const filtered = options.filter(o => o.label.toLowerCase().includes(q.toLowerCase()));
   let label = placeholder;
@@ -35,7 +42,7 @@ function MultiSelect({ options, selected, onChange, placeholder, gold, searchabl
           <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
             {filtered.map(o => (
               <label className="ms-opt" key={o.value}>
-                <input type="checkbox" checked={sel.has(o.value)} onChange={() => toggle(o.value)} />
+                <input type="checkbox" checked={checkedSet.has(o.value)} onChange={() => toggle(o.value)} />
                 <span>{o.label}</span>
               </label>
             ))}
@@ -135,6 +142,15 @@ function FilterBar(props) {
   const corpOn = mode === 'corp' || mode === 'both';
   const distOn = mode === 'dist' || mode === 'both';
   const distMode = distOn;
+  // "Código CLACO": si hay algún otro filtro activo, se tildan los CLACO que se están mostrando
+  // (mismo criterio que en la Tabla Resumen). Aquí las compañías se filtran vía `companies`
+  // (por código, como en esta vista), no vía `companias`.
+  const clacoNarrowed = !!((st.vps && st.vps.length) || (st.gers && st.gers.length) || (st.itemrels && st.itemrels.length) || (st.items && st.items.length) || (st.cecos && st.cecos.length) || (st.tcs && st.tcs.length) || (st.aps && st.aps.length) || (st.companies && st.companies.length));
+  const clacoScope = React.useMemo(() => !clacoNarrowed ? [] : A.clacosInScope({
+    dataMode: mode, companies: st.companies || [], vps: st.vps || [], gers: st.gers || [], itemrels: st.itemrels || [],
+    items: st.items || [], tcs: st.tcs || [], clases: st.clases || [], cecos: st.cecos || [],
+    st: st.stMode || '', aps: st.aps || [], hidden: st.hidden || {},
+  }), [clacoNarrowed, mode, st.companies, st.vps, st.gers, st.itemrels, st.items, st.tcs, st.clases, st.cecos, st.stMode, st.aps, st.hidden]);
   const setFlags = (c, d) => {
     const dataMode = c && d ? 'both' : c ? 'corp' : d ? 'dist' : 'none';
     // Al cambiar de modo, conservar las selecciones de Gerencia/Ítem que sigan
@@ -201,7 +217,8 @@ function FilterBar(props) {
     <div className="fgroup" style={{ minWidth: 150 }} key="claco">
       <div className="fcap">Código CLACO</div>
       <div className="fctl">
-        <MultiSelect options={clacoOpts} selected={st.clacos || []} onChange={v => set({ clacos: v })} placeholder="Todos" searchable />
+        <MultiSelect options={clacoOpts} selected={st.clacos || []} onChange={v => set({ clacos: v })} placeholder="Todos" searchable
+          impliedAll={clacoNarrowed ? clacoScope : undefined} />
       </div>
     </div>,
     <div className="fgroup" style={{ minWidth: 150 }} key="ap">
