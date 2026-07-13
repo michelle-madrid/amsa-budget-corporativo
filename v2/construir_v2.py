@@ -85,7 +85,7 @@ FCST_SHEET = "Forecast 5+7 Unpivot"
 # Forecast 5+7 2026 (hoja Unpivot): CECO=2 · Clase Costo(CLACO)=4 · Valor=15 · Valor USD 2027=16
 FC_CECO, FC_CLACO, FC_VALN, FC_VALA = 2, 4, 15, 16
 FC_CG, FC_ACT = 8, 9   # Forecast: Concepto Gasto (col8) · Actividad (col9)
-PPTO27_FILE = os.path.join(UP, "EXPORT_PPTO27_V6.XLSX")
+PPTO27_FILE = os.path.join(UP, "PPTO27_13_07_2026.XLSX")
 PPTO27_SHEET = "Sheet1"
 # Ppto 2027 (hoja ancha): CECO=2 · Clase Costo(CLACO)=4 · Total-2027=26 (USD, ya en moneda 2027).
 P27_CECO, P27_CLACO, P27_TOTAL = 2, 4, 26
