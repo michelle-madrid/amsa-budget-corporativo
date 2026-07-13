@@ -6,3 +6,6 @@
 Thumbs.db
 desktop.ini
 ~$*
+
+# Excel generados desde la BBDD (regenerables: python bbdd_a_excel.py). Los parquet SÍ se versionan.
+v2/bbdd/*.xlsx

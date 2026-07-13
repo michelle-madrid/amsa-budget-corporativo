@@ -77,6 +77,7 @@ DATA_JS = os.path.join(HERE, "data_v2.js")
 HTML_PATH = os.path.join(HERE, "Dashboard Corporativo v2.html")
 V3_DIR = os.path.join(os.path.dirname(HERE), "v3")
 V3_HTML = os.path.join(V3_DIR, "Dashboard Corporativo v3.html")
+BBDD_DIR = os.path.join(HERE, "bbdd")   # BBDD completa (esquema estrella, parquet) — espejo regenerable de la data
 
 REAL_SHEET = "Data Consolidada"
 BUD_SHEET = "Budget Consolidado Unpivot"
@@ -965,6 +966,125 @@ def construir_v3(base_html, data_js, det, detp=None):
 
 
 # ===========================================================================
+#  BBDD COMPLETA (esquema estrella, parquet) — espejo REGENERABLE de la MISMA data que se
+#  embebe en el HTML. Varias tablas en bbdd/: hechos (registros/detalle/dotaciones) +
+#  diccionarios (cecos/items/clacos/compañías). Se unen por ceco / item / claco. NO es un
+#  deliverable (no toca v2 ni v3); se reescribe en cada corrida (full o --solo-v3).
+# ===========================================================================
+_BBDD_TABLAS = {
+    "fact_registros": "Real + Ppto histórico (long por bucket). Grano: ceco×item×contra×claco×bucket. "
+                      "buckets: 2022-2025, 2026ytd, 2026fy. Valores {n=Normal USD, a=Ajustada 2027}.",
+    "fact_anual": "Forecast 5+7 2026 y Ppto 2027 (anual). Grano: ceco×item×claco×medida.",
+    "fact_detalle_real": "Detalle del Real línea a línea (Contrapartida › Texto pedido › Denominación › Documento). "
+                         "Grano: ceco×item×contra×texto×denom×doc×bucket. st=1 → Services & Tech.",
+    "fact_detalle_ppto": "Detalle de Ppto/Forecast (Concepto Gasto › Actividad). Grano: ceco×item×concepto×actividad×medida.",
+    "dim_cecos": "Diccionario de CECO (ambas estructuras). Une por ceco. estructura ∈ {new, old}.",
+    "dim_items": "Diccionario de Ítem (Agrupación4): nombre, tipo costo, ítem relevante, clasificación cuenta. Une por item.",
+    "dim_clacos": "Diccionario de CLACO (Clase de Costo) → Desc. CLACO. Une por claco.",
+    "dim_companias": "Diccionario de compañías. Une por codigo (= prefijo del ceco).",
+    "fact_dotaciones": "Dotaciones (FTE) Propios/Contratista por VP/Gerencia, año y período.",
+}
+
+
+def escribir_bbdd(agg, fcst, ppto27, det, detp, cecoNew, cecoOld, comps,
+                  itemNames, itemTc, itemRel, relNames, itemClas, claco2name, dot_tidy):
+    """Vuelca TODA la info del dashboard como tablas parquet (esquema estrella) en bbdd/."""
+    os.makedirs(BBDD_DIR, exist_ok=True)
+    log("Escribiendo BBDD (parquet, esquema estrella)…")
+
+    def w(name, rows, cols):
+        pd.DataFrame(rows, columns=cols).to_parquet(os.path.join(BBDD_DIR, name + ".parquet"), index=False)
+        log(f"    bbdd/{name}.parquet · {len(rows)} filas")
+
+    _cl = lambda cl: (cl if cl and cl != "(sin claco)" else None)
+
+    # 1) fact_registros — Real + Ppto histórico (long por bucket), tal cual el agg.
+    w("fact_registros",
+      [dict(ceco=c, item=i, contra=co, claco=_cl(cl), bucket=b,
+            real_n=_round(v[0]), real_a=_round(v[1]), plan_n=_round(v[2]), plan_a=_round(v[3]))
+       for (c, i, co, b, cl), v in agg.items()],
+      ["ceco", "item", "contra", "claco", "bucket", "real_n", "real_a", "plan_n", "plan_a"])
+
+    # 2) fact_anual — Forecast 5+7 2026 y Ppto 2027 (anual, por ceco×item×claco).
+    anual = [dict(ceco=c, item=i, claco=_cl(cl), medida="forecast_2026", valor_n=_round(n), valor_a=_round(a))
+             for (c, i, cl), (n, a) in fcst.items()]
+    anual += [dict(ceco=c, item=i, claco=_cl(cl), medida="ppto_2027", valor_n=_round(v), valor_a=_round(v))
+              for (c, i, cl), v in ppto27.items()]
+    w("fact_anual", anual, ["ceco", "item", "claco", "medida", "valor_n", "valor_a"])
+
+    # 3) fact_detalle_real — de-interna el blob DET (índices → strings).
+    S = det["s"]; IDXBK = ["2022", "2023", "2024", "2025", "2026ytd"]
+    drows = []
+    for key, rows in det["k"].items():
+        item, contra = key.split("\x01", 1)
+        for ci, ti, di, doi, bk, n, a, st in rows:
+            drows.append(dict(ceco=S[ci], item=item, contra=contra, texto_pedido=S[ti], denominacion=S[di],
+                              documento=S[doi], bucket=IDXBK[bk] if bk < len(IDXBK) else str(bk),
+                              valor_n=n, valor_a=a, st=st))
+    w("fact_detalle_real", drows,
+      ["ceco", "item", "contra", "texto_pedido", "denominacion", "documento", "bucket", "valor_n", "valor_a", "st"])
+
+    # 4) fact_detalle_ppto — de-interna el blob DETP.
+    Sp = detp["s"]; MED = {0: "ppto_2025", 1: "ppto_2026ytd", 2: "ppto_2026fy", 3: "forecast_2026", 4: "ppto_2027"}
+    prows = []
+    for item, rows in detp["k"].items():
+        for ci, cgi, ai, med, n, a in rows:
+            prows.append(dict(ceco=Sp[ci], item=item, concepto_gasto=Sp[cgi], actividad=Sp[ai],
+                              medida=MED.get(med, str(med)), valor_n=n, valor_a=a))
+    w("fact_detalle_ppto", prows,
+      ["ceco", "item", "concepto_gasto", "actividad", "medida", "valor_n", "valor_a"])
+
+    # 5) dim_cecos — ambas estructuras (long por 'estructura').
+    crows = []
+    for estr, mapa in (("new", cecoNew), ("old", cecoOld)):
+        for c, d in mapa.items():
+            crows.append(dict(ceco=c, estructura=estr, vp=d.get("vp"), gerencia=d.get("ger"),
+                              desc_ceco=d.get("dceco"), tipo_costo=d.get("tc"), aplica=d.get("ap"),
+                              clasificacion=d.get("cl"), compania=d.get("comp")))
+    w("dim_cecos", crows,
+      ["ceco", "estructura", "vp", "gerencia", "desc_ceco", "tipo_costo", "aplica", "clasificacion", "compania"])
+
+    # 6) dim_items — nombre + tipo costo + ítem relevante + clasificación cuenta.
+    allit = set(itemNames) | set(itemTc) | set(itemRel) | set(itemClas)
+    irows = []
+    for it in sorted(allit):
+        rel = itemRel.get(it)
+        irows.append(dict(item=it, nombre=itemNames.get(it, it), tipo_costo=itemTc.get(it),
+                          item_relevante=rel, item_relevante_nombre=(relNames.get(rel) if rel else None),
+                          clasif_cuenta=itemClas.get(it)))
+    w("dim_items", irows,
+      ["item", "nombre", "tipo_costo", "item_relevante", "item_relevante_nombre", "clasif_cuenta"])
+
+    # 7) dim_clacos — código → Desc. CLACO (diccionario completo).
+    w("dim_clacos", [dict(claco=c, desc_claco=n) for c, n in sorted(claco2name.items())],
+      ["claco", "desc_claco"])
+
+    # 8) dim_companias.
+    w("dim_companias",
+      [dict(codigo=k, nombre=v.get("nombre"), abrev=v.get("abrev"), clasificacion=v.get("clasif"))
+       for k, v in comps.items()],
+      ["codigo", "nombre", "abrev", "clasificacion"])
+
+    # 9) fact_dotaciones — ya viene tidy.
+    w("fact_dotaciones", dot_tidy or [], ["src", "vp", "ger", "year", "period", "real", "plan"])
+
+    # LEEME con el esquema y las claves de unión.
+    lines = ["BBDD del Dashboard Corporativo — tablas parquet (esquema estrella)",
+             "=" * 66,
+             "Espejo REGENERABLE de la MISMA data embebida en el HTML. Se reescribe en cada",
+             "corrida de construir_v2.py. Valores {n}=Normal (USD) · {a}=Ajustada 2027.",
+             "Se leen con pandas (pd.read_parquet), Power BI/Power Query o DuckDB.", "",
+             "Uniones: fact.* ⋈ dim_cecos por 'ceco' · ⋈ dim_items por 'item' · ⋈ dim_clacos",
+             "por 'claco' · ⋈ dim_companias por codigo = ceco[:4]. En dim_cecos filtrá",
+             "estructura='new' (o 'old') según el toggle 'Estructura CECOS' del tablero.", ""]
+    for name, desc in _BBDD_TABLAS.items():
+        lines.append(f"· {name}.parquet")
+        lines.append(f"    {desc}")
+    open(os.path.join(BBDD_DIR, "LEEME.txt"), "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    log(f"  BBDD (esquema estrella) escrita en {BBDD_DIR} · {len(_BBDD_TABLAS)} tablas + LEEME.txt")
+
+
+# ===========================================================================
 def main(solo_v3=False):
     # solo_v3=True: regenera ÚNICAMENTE el v3 (re-embebe en memoria el código actual de src/ +
     # la data y lo vuelca al v3). NO escribe el HTML v2 ni sus intermedios (parquet, data.js).
@@ -1073,6 +1193,11 @@ def main(solo_v3=False):
     det = leer_detalle(name2item, _en_alcance, st_names)
     detp = leer_detalle_pf(code2item, _en_alcance)
     construir_v3(base_html, data_js, det, detp)
+
+    # BBDD completa (parquet, esquema estrella): toda la data del dashboard en tablas unibles.
+    # Se escribe SIEMPRE (también en --solo-v3): no es un deliverable, refleja la data vigente.
+    escribir_bbdd(agg, fcst, ppto27, det, detp, cecoNew, cecoOld, comps,
+                  itemNames, itemTc, itemRel, relNames, itemClas, claco2name, dot_tidy)
     log("\n✓ LISTO.")
 
 
