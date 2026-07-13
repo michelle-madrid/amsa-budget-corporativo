@@ -542,7 +542,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const bv = baseCol ? valOf(baseCol, node) : 0;
     const dif = bv - v;
     if (kind === 'dif') return dif;
-    return v ? dif / Math.abs(v) : NaN;   // % Dif indefinido si v=0
+    return bv ? dif / Math.abs(bv) : NaN;   // % Dif = Dif/base; indefinido si base=0
   };
   let sortCmp = null;   // comparador activo (se pasa a flattenTree para ordenar también el detalle)
   if (sortKey) {
@@ -735,7 +735,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         else {
           const v = valOf(c, node);
           const dif = baseVal - v;
-          const pct = v ? dif / Math.abs(v) : null;
+          const pct = baseVal ? dif / Math.abs(baseVal) : null;   // % Dif = Dif / base (Ppto 2027)
           out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, unit, dec)}</td>);
           out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 0)}</td>);
         }
@@ -1119,7 +1119,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           )}
         </div>
         <div className="note" style={{ padding: '8px 14px 12px' }}>
-          Elige Datos, filtros (VP / Gerencia / Ítem), estructura y los períodos a comparar. La 1ª columna es la base; «Dif» = base − período, «% Dif» = Dif / período. Clic en un encabezado para ordenar (menor→mayor; otra vez, mayor→menor). Arrastra un encabezado de período para reordenar las columnas. Clic en un VP / Gerencia / Ítem filtra el panel por ese elemento (clic de nuevo para quitar); CECO / Contrapartida filtran vía el buscador.
+          Elige Datos, filtros (VP / Gerencia / Ítem), estructura y los períodos a comparar. La 1ª columna es la base; «Dif» = base − período, «% Dif» = Dif / base. Clic en un encabezado para ordenar (menor→mayor; otra vez, mayor→menor). Arrastra un encabezado de período para reordenar las columnas. Clic en un VP / Gerencia / Ítem filtra el panel por ese elemento (clic de nuevo para quitar); CECO / Contrapartida filtran vía el buscador.
           Valor: elige «Normal» o «Moneda Ajustada 2027» en la barra de filtros. Ppto 2027 = Presupuesto 2027 cargado del Excel.
         </div>
       </div>
