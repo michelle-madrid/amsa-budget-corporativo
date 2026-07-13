@@ -74,6 +74,13 @@ def main():
         for vp in vpsOf(r["ceco"]):
             por_vp.setdefault(vp, []).append(r)
 
+    # Solo se emiten carpetas de VPs de la estructura NUEVA (vigente). Las VPs que solo
+    # existían en la ANTIGUA (p.ej. "VP Desarrollo", "VP Estrategia e Innovación") o "(sin VP)"
+    # ya no llevan dashboard propio: su data cae en las VPs nuevas correspondientes. El contenido
+    # de las VPs que se mantienen NO cambia (siguen incluyendo sus CECOs de ambas estructuras).
+    new_vps = {m.get("vp") for m in cecoNew.values() if m.get("vp")}
+    por_vp = {vp: recs for vp, recs in por_vp.items() if vp in new_vps}
+
     os.makedirs(OUT_DIR, exist_ok=True)
     # Limpieza de corridas anteriores (archivos planos y carpetas por VP).
     for nombre in os.listdir(OUT_DIR):
