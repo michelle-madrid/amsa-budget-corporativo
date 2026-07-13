@@ -324,10 +324,11 @@ const RESUMEN_DIMS = {
   orgcc:  ['vp', 'ger', 'itemrel', 'item', 'dceco', 'ceco', 'contra'],
 };
 
-function ResumenView({ overrides, unit, dec, valMode, cecoMode, onValMode, onCecoMode, st, set }) {
+function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode, onCecoMode, st, set }) {
   const A = window.CORP;
   valMode = valMode || 'n'; cecoMode = cecoMode || 'new';
   onValMode = onValMode || (() => {}); onCecoMode = onCecoMode || (() => {});
+  onDec = onDec || (() => {});
   st = st || {}; set = set || (() => {});
   // Filtros COMPARTIDOS con la pestaña "Gastos Corporativos": viven en el estado del App
   // (no se reinician al cambiar de pestaña) y se mantienen sincronizados entre ambas vistas.
@@ -921,6 +922,18 @@ function ResumenView({ overrides, unit, dec, valMode, cecoMode, onValMode, onCec
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600, cursor: 'pointer' }}>
               <input type="checkbox" checked={showDif} onChange={e => setShowDif(e.target.checked)} /> Mostrar Dif / % Dif
             </label>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600 }}>
+              Decimales
+              <span style={{ display: 'inline-flex', alignItems: 'stretch', height: 26, border: '1px solid var(--teal-200)', borderRadius: 6, overflow: 'hidden', background: '#fff' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 24, fontWeight: 700, color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>{dec}</span>
+                <span style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--teal-100)' }}>
+                  <button type="button" aria-label="Más decimales" onClick={() => onDec(Math.min(6, dec + 1))}
+                    style={{ border: 0, borderBottom: '1px solid var(--teal-100)', background: 'var(--teal-wash2)', color: 'var(--teal-muted)', cursor: 'pointer', padding: '0 7px', fontSize: 7, lineHeight: '12px', flex: 1 }}>▲</button>
+                  <button type="button" aria-label="Menos decimales" onClick={() => onDec(Math.max(0, dec - 1))}
+                    style={{ border: 0, background: 'var(--teal-wash2)', color: 'var(--teal-muted)', cursor: 'pointer', padding: '0 7px', fontSize: 7, lineHeight: '12px', flex: 1 }}>▼</button>
+                </span>
+              </span>
+            </span>
             <button type="button" onClick={expandAll}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
               ⤓ Expandir todo
@@ -1752,7 +1765,7 @@ function App() {
         </div>
         {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} cecoMode={cecoMode} onCecoMode={onCecoMode} />
          : page === 'dotaciones' ? <DotacionesView />
-         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} st={st} set={set} />
+         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} onDec={v => setTweak('decimals', v)} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} st={st} set={set} />
          : <React.Fragment>
         <FilterBar st={st} set={set} gerOptions={dims.gers} itemrelOptions={dims.itemrels} cecoOptions={dims.cecos} clacoOptions={dims.clacos} tcOptions={dims.tcs} clasOptions={dims.clases} apOptions={dims.aps}
           valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} />
@@ -1859,7 +1872,7 @@ function App() {
                 <span style={{ display: 'inline-flex', alignItems: 'stretch', height: 26, border: '1px solid var(--teal-200)', borderRadius: 6, overflow: 'hidden', background: '#fff' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 24, fontWeight: 700, color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>{dec}</span>
                   <span style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--teal-100)' }}>
-                    <button type="button" aria-label="Más decimales" onClick={() => setTweak('decimals', Math.min(3, dec + 1))}
+                    <button type="button" aria-label="Más decimales" onClick={() => setTweak('decimals', Math.min(6, dec + 1))}
                       style={{ border: 0, borderBottom: '1px solid var(--teal-100)', background: 'var(--teal-wash2)', color: 'var(--teal-muted)', cursor: 'pointer', padding: '0 7px', fontSize: 7, lineHeight: '12px', flex: 1 }}>▲</button>
                     <button type="button" aria-label="Menos decimales" onClick={() => setTweak('decimals', Math.max(0, dec - 1))}
                       style={{ border: 0, background: 'var(--teal-wash2)', color: 'var(--teal-muted)', cursor: 'pointer', padding: '0 7px', fontSize: 7, lineHeight: '12px', flex: 1 }}>▼</button>
