@@ -1454,7 +1454,7 @@ function App() {
     month: 11,          // año completo (sin filtro mensual: solo acumulado anual)
     dataMode: 'both',   // corp | dist | both | none (chips Corporativo/Distribuible)
     items: [], itemrels: [], vps: [], gers: [], companies: [], companias: [], cecos: [], clacos: [], tcs: [],
-    hidden: {},         // valores ocultados a mano: { dim: [valores] }
+    hidden: { claco: ['6125101'] },  // oculto por defecto: CLACO 6125101 "Fletes por venta cobre" (solo aparece en VP Comercialización) → no se considera por defecto; restaurable con "⊘ restaurar"
     clases: defaultClases(), // por defecto: todas menos Mano de Obra
     stMode: 'excl',     // Services & Tech: por defecto SIN S&T ('excl'). '' todos · 'only' solo · 'excl' sin
     aps: [],
