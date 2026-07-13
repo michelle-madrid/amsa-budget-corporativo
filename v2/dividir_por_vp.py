@@ -6,7 +6,7 @@ Requiere haber corrido antes `python construir_v2.py` (usa el v3 ya generado).
 Uso:  python dividir_por_vp.py
 
 Lee  : v3/Dashboard Corporativo v3.html   (autocontenido, con detalle)
-Escribe: v3/por_vp/Dashboard <VP>.html    (uno por Vicepresidencia)
+Escribe: v3/por_vp/<VP>/Dashboard <VP>.html    (uno por Vicepresidencia)
 
 Cada archivo:
   · Los registros cuyo CECO pertenece a esa VP en la estructura ANTIGUA **o** en la NUEVA
@@ -15,6 +15,9 @@ Cada archivo:
   · CECOS (cada mapa filtrado por su propia VP), DETALLE (re-interned) y Forecast/Ppto2027 acotados.
   · SIN Dotaciones (se vacía DOT_DATA → la pestaña "Dotaciones AMSA (FTE)" se oculta sola).
   · Título (H1 y pestaña del navegador) con el nombre de la VP.
+
+SUBVISTAS: además, un HTML extra dentro de la carpeta de una VP, filtrado por Gerencia
+  (ver SUBVISTAS). Ej.: "TICA" dentro de VP Finanzas = solo Gerencias TICA + TICA Corporativo.
 Reutiliza el embebido (gzip+base64) y la plantilla del v3 vía construir_v2.
 """
 import os
@@ -25,6 +28,13 @@ import construir_v2 as B   # reutiliza V3_HTML/V3_DIR, DATA_UUID, ASSETS, _get_a
 OUT_DIR = os.path.join(B.V3_DIR, "por_vp")
 MODEL_UUID = next(u for u, (n, _) in B.ASSETS.items() if n == "model.js")
 _j = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))
+
+# Sub-vistas especiales: un HTML extra dentro de la carpeta de una VP, con SOLO las Gerencias
+# indicadas (estructura nueva). Un único archivo por sub-vista.
+SUBVISTAS = [
+    {"vp": "VP Finanzas", "titulo": "TICA", "archivo": "Dashboard TICA.html",
+     "gerencias": {"TICA", "TICA Corporativo"}},
+]
 
 
 def _extract(js, name):
@@ -37,6 +47,73 @@ def _extract(js, name):
 
 def _safe(name):
     return re.sub(r'[\\/:*?"<>|]+', " ", str(name)).strip() or "SIN VP"
+
+
+def _filtrar_det(DET, cecos):
+    """Recorta el detalle Real a los CECOs dados, re-internando strings (archivo liviano)."""
+    if not DET:
+        return None
+    S = DET["s"]; newS, idx = [], {}
+    def I(x):
+        k = idx.get(x)
+        if k is None:
+            k = len(newS); idx[x] = k; newS.append(x)
+        return k
+    K = {}
+    for key, rows in DET["k"].items():
+        fr = [[I(S[r[0]]), I(S[r[1]]), I(S[r[2]]), I(S[r[3]]), r[4], r[5], r[6], r[7]]
+              for r in rows if S[r[0]] in cecos]
+        if fr:
+            K[key] = fr
+    return {"s": newS, "k": K}
+
+
+def _filtrar_detp(DETP, cecos):
+    """Recorta el detalle Ppto/Forecast (Concepto Gasto › Actividad) a los CECOs dados."""
+    if not DETP:
+        return None
+    Sp = DETP["s"]; newSp, idxp = [], {}
+    def Ip(x):
+        k = idxp.get(x)
+        if k is None:
+            k = len(newSp); idxp[x] = k; newSp.append(x)
+        return k
+    Kp = {}
+    for key, rows in DETP["k"].items():
+        fr = [[Ip(Sp[r[0]]), Ip(Sp[r[1]]), Ip(Sp[r[2]]), r[3], r[4], r[5]]
+              for r in rows if Sp[r[0]] in cecos]
+        if fr:
+            Kp[key] = fr
+    return {"s": newSp, "k": Kp}
+
+
+def _escribir(html, model, LOGO, DET, DETP, V, recs, cecoOldSub, cecoNewSub, titulo, fn):
+    """Escribe UN HTML autocontenido con la data recortada (recs + mapas CECO + detalle) y el
+    título dado. Devuelve el tamaño en MB."""
+    cecos = {r["ceco"] for r in recs}
+    Vf = dict(V)
+    Vf["records"] = recs
+    Vf["cecoOld"] = cecoOldSub
+    Vf["cecoNew"] = cecoNewSub
+    parts = ["window.V2_DATA = " + _j(Vf) + ";", 'window.DOT_DATA = {"records":[]};']
+    if LOGO:
+        parts.append("window.CORP_LOGO = " + _j(LOGO) + ";")
+    detf = _filtrar_det(DET, cecos)
+    if detf is not None:
+        parts.append("window.DET = " + _j(detf) + ";")
+    detpf = _filtrar_detp(DETP, cecos)
+    if detpf is not None:
+        parts.append("window.DETP = " + _j(detpf) + ";")
+    out = B._set_asset(html, B.DATA_UUID, "\n".join(parts))
+    # Título en el H1 (TEXTOS de model.js) y en la pestaña del navegador.
+    model_vp = (model
+                .replace('"titulo": "Actividad Corporativa"', '"titulo": ' + _j(str(titulo)))
+                .replace('"tituloPlus": "+ Distribuibles Ppto 2027"', '"tituloPlus": ""'))
+    out = B._set_asset(out, MODEL_UUID, model_vp)
+    out = re.sub(r"<title>.*?</title>", "<title>" + _safe(titulo) + " · AMSA</title>", out, count=1)
+    os.makedirs(os.path.dirname(fn), exist_ok=True)
+    open(fn, "w", encoding="utf-8", newline="").write(out)
+    return os.path.getsize(fn) / 1e6
 
 
 def main():
@@ -55,10 +132,9 @@ def main():
     cecoOld = V.get("cecoOld", {}) or {}
     cecoNew = V.get("cecoNew", {}) or {}
 
-    # Un CECO puede pertenecer a DISTINTA VP en la estructura antigua vs. la nueva.
-    # Para no perder plata, un registro va al archivo de una VP si su CECO pertenece a
-    # esa VP en la estructura ANTIGUA **o** en la NUEVA (puede quedar en 2 archivos).
-    # Dentro de cada archivo, el modelo oculta el CECO en la estructura donde no aplica.
+    # Un CECO puede pertenecer a DISTINTA VP en la estructura antigua vs. la nueva. Para no
+    # perder plata, un registro va al archivo de una VP si su CECO pertenece a esa VP en la
+    # estructura ANTIGUA **o** en la NUEVA. Dentro del archivo, el modelo lo oculta donde no aplica.
     def vpsOf(ceco):
         s = set()
         mo, mn = cecoOld.get(ceco), cecoNew.get(ceco)
@@ -68,16 +144,12 @@ def main():
             s.add(mn["vp"])
         return s or {"(sin VP)"}
 
-    # Registros agrupados por VP (incluye pseudo-registros Forecast/Ppto2027: llevan CECO).
     por_vp = {}
     for r in V["records"]:
         for vp in vpsOf(r["ceco"]):
             por_vp.setdefault(vp, []).append(r)
 
-    # Solo se emiten carpetas de VPs de la estructura NUEVA (vigente). Las VPs que solo
-    # existían en la ANTIGUA (p.ej. "VP Desarrollo", "VP Estrategia e Innovación") o "(sin VP)"
-    # ya no llevan dashboard propio: su data cae en las VPs nuevas correspondientes. El contenido
-    # de las VPs que se mantienen NO cambia (siguen incluyendo sus CECOs de ambas estructuras).
+    # Solo se emiten carpetas de VPs de la estructura NUEVA (vigente).
     new_vps = {m.get("vp") for m in cecoNew.values() if m.get("vp")}
     por_vp = {vp: recs for vp, recs in por_vp.items() if vp in new_vps}
 
@@ -93,79 +165,34 @@ def main():
     B.log(f"Dividiendo el v3 en {len(por_vp)} Vicepresidencias…")
     generados = []
     for vp, recs in sorted(por_vp.items()):
-        cecos = {r["ceco"] for r in recs}
-        # Cada mapa de estructura se filtra por SU PROPIA VP (independiente del otro),
-        # así el toggle Antigua/Nueva muestra en cada caso justo los CECOs de esta VP.
+        # Cada mapa de estructura se filtra por SU PROPIA VP (independiente del otro).
         cecosOld_vp = {c for c, m in cecoOld.items() if m.get("vp") == vp}
         cecosNew_vp = {c for c, m in cecoNew.items() if m.get("vp") == vp}
-
-        Vf = dict(V)
-        Vf["records"] = recs
-        Vf["cecoOld"] = {c: m for c, m in cecoOld.items() if c in cecosOld_vp}
-        Vf["cecoNew"] = {c: m for c, m in cecoNew.items() if c in cecosNew_vp}
-
-        # DETALLE: solo líneas de los CECOs de esta VP, re-internando strings (archivo liviano).
-        detf = None
-        if DET:
-            S = DET["s"]
-            newS, idx = [], {}
-            def I(x):
-                k = idx.get(x)
-                if k is None:
-                    k = len(newS); idx[x] = k; newS.append(x)
-                return k
-            K = {}
-            for key, rows in DET["k"].items():
-                fr = [[I(S[row[0]]), I(S[row[1]]), I(S[row[2]]), I(S[row[3]]), row[4], row[5], row[6], row[7]]
-                      for row in rows if S[row[0]] in cecos]
-                if fr:
-                    K[key] = fr
-            detf = {"s": newS, "k": K}
-
-        # DETALLE Ppto/Forecast (Concepto Gasto › Actividad): filas [cecoIdx,cgIdx,actIdx,meas,n,a].
-        detpf = None
-        if DETP:
-            Sp = DETP["s"]
-            newSp, idxp = [], {}
-            def Ip(x):
-                k = idxp.get(x)
-                if k is None:
-                    k = len(newSp); idxp[x] = k; newSp.append(x)
-                return k
-            Kp = {}
-            for key, rows in DETP["k"].items():
-                fr = [[Ip(Sp[row[0]]), Ip(Sp[row[1]]), Ip(Sp[row[2]]), row[3], row[4], row[5]]
-                      for row in rows if Sp[row[0]] in cecos]
-                if fr:
-                    Kp[key] = fr
-            detpf = {"s": newSp, "k": Kp}
-
-        parts = ["window.V2_DATA = " + _j(Vf) + ";", 'window.DOT_DATA = {"records":[]};']
-        if LOGO:
-            parts.append("window.CORP_LOGO = " + _j(LOGO) + ";")
-        if detf is not None:
-            parts.append("window.DET = " + _j(detf) + ";")
-        if detpf is not None:
-            parts.append("window.DETP = " + _j(detpf) + ";")
-
-        out = B._set_asset(html, B.DATA_UUID, "\n".join(parts))
-        # Título de la VP en el H1 (TEXTOS de model.js) y en la pestaña del navegador.
-        model_vp = (model
-                    .replace('"titulo": "Actividad Corporativa"', '"titulo": ' + _j(str(vp)))
-                    .replace('"tituloPlus": "+ Distribuibles Ppto 2027"', '"tituloPlus": ""'))
-        out = B._set_asset(out, MODEL_UUID, model_vp)
-        out = re.sub(r"<title>.*?</title>", "<title>" + _safe(vp) + " · AMSA</title>", out, count=1)
-
-        vpdir = os.path.join(OUT_DIR, _safe(vp))          # una carpeta por VP
-        os.makedirs(vpdir, exist_ok=True)
-        fn = os.path.join(vpdir, "Dashboard " + _safe(vp) + ".html")
-        open(fn, "w", encoding="utf-8", newline="").write(out)
-        generados.append((vp, len(recs), len(cecosOld_vp | cecosNew_vp), os.path.getsize(fn) / 1e6))
+        fn = os.path.join(OUT_DIR, _safe(vp), "Dashboard " + _safe(vp) + ".html")
+        mb = _escribir(html, model, LOGO, DET, DETP, V, recs,
+                       {c: m for c, m in cecoOld.items() if c in cecosOld_vp},
+                       {c: m for c, m in cecoNew.items() if c in cecosNew_vp}, vp, fn)
+        generados.append((vp, len(recs), len(cecosOld_vp | cecosNew_vp), mb))
 
     B.log("  --- Dashboards por VP generados ---")
     for vp, nr, nc, mb in generados:
         B.log(f"    {vp:42} {nr:5} regs · {nc:3} CECOs · {mb:4.1f} MB")
-    B.log(f"\n✓ LISTO. {len(generados)} archivos en {OUT_DIR}")
+
+    # Sub-vistas por Gerencia (un único HTML extra dentro de la carpeta de la VP).
+    for sv in SUBVISTAS:
+        gers = sv["gerencias"]
+        cnew = {c: m for c, m in cecoNew.items() if m.get("ger") in gers}   # define el alcance (estructura nueva)
+        cold = {c: m for c, m in cecoOld.items() if c in cnew}              # mismos CECOs, mapa antiguo (para el toggle)
+        cecos_sv = set(cnew)
+        recs = [r for r in V["records"] if r["ceco"] in cecos_sv]
+        if not recs:
+            B.log(f"  (subvista '{sv['titulo']}' en {sv['vp']}: sin registros, se omite)")
+            continue
+        fn = os.path.join(OUT_DIR, _safe(sv["vp"]), sv["archivo"])
+        mb = _escribir(html, model, LOGO, DET, DETP, V, recs, cold, cnew, sv["titulo"], fn)
+        B.log(f"  + Subvista '{sv['titulo']}' en {sv['vp']}: {len(recs)} regs · {len(cecos_sv)} CECOs · Gerencias {sorted(gers)} · {mb:.1f} MB")
+
+    B.log(f"\n✓ LISTO. {len(generados)} dashboards por VP + {len(SUBVISTAS)} subvista(s) en {OUT_DIR}")
 
 
 if __name__ == "__main__":
