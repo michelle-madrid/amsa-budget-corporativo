@@ -1784,7 +1784,7 @@ function App() {
               <span style={{ color: corpOn ? 'var(--amsa-teal)' : 'var(--amsa-teal-light)', transition: 'color .15s' }}>{TX.header.titulo}</span>
               <span className="plus" style={{ color: distOn ? 'var(--amsa-teal)' : 'var(--amsa-teal-light)', transition: 'color .15s' }}> {TX.header.tituloPlus}</span>
             </h1>
-            <div className="sub">{TX.header.subtitulo}</div>
+            <div className="sub">{TX.header.subtitulo}{(window.V2_DATA && window.V2_DATA.pptoTs) ? ' · Ppto 2027 actualizado el ' + window.V2_DATA.pptoTs : ''}</div>
           </div>
           <img className="hdr-logo" src={window.CORP_LOGO || 'assets/logo_amsa.png'} alt="Antofagasta Minerals" />
         </div>

@@ -85,11 +85,18 @@ FCST_SHEET = "Forecast 5+7 Unpivot"
 # Forecast 5+7 2026 (hoja Unpivot): CECO=2 · Clase Costo(CLACO)=4 · Valor=15 · Valor USD 2027=16
 FC_CECO, FC_CLACO, FC_VALN, FC_VALA = 2, 4, 15, 16
 FC_CG, FC_ACT = 8, 9   # Forecast: Concepto Gasto (col8) · Actividad (col9)
-PPTO27_FILE = os.path.join(UP, "PPTO27_13_07_2026_15_30.XLSX")
+PPTO27_FILE = os.path.join(UP, "PPTO27_13_07_2026_15_50.XLSX")
 PPTO27_SHEET = "Sheet1"
 # Ppto 2027 (hoja ancha): CECO=2 · Clase Costo(CLACO)=4 · Total-2027=26 (USD, ya en moneda 2027).
 P27_CECO, P27_CLACO, P27_TOTAL = 2, 4, 26
 P27_CG, P27_ACT = 8, 9   # Ppto 2027: Concepto Gasto (col8) · Actividad (col9)
+
+
+def _ppto_ts():
+    """Fecha/hora de actualización del Ppto, sacada del NOMBRE del archivo
+    (PPTO27_DD_MM_YYYY_HH_MM). Devuelve 'DD/MM/YYYY HH:MM' o '' si no matchea."""
+    m = re.search(r"(\d{2})_(\d{2})_(\d{4})_(\d{2})_(\d{2})", os.path.basename(PPTO27_FILE))
+    return f"{m.group(1)}/{m.group(2)}/{m.group(3)} {m.group(4)}:{m.group(5)}" if m else ""
 YEARS_HIST = [2022, 2023, 2024, 2025]
 YTD_2026 = {"01", "02", "03", "04", "05"}   # 2026 YTD = ene–may (Real y Ppto, mismo período)
 
@@ -644,6 +651,7 @@ def construir_data_js(records, itemNames, itemTc, cecoNew, cecoOld, comps, dot_r
           "itemRel": itemRel or {}, "relNames": relNames or {}, "itemClas": itemClas or {},
           "clacoNames": clacoNames,
           "cecoNew": cecoNew, "cecoOld": cecoOld, "comps": comps,
+          "pptoTs": _ppto_ts(),   # fecha/hora de actualización del Ppto (del nombre del archivo)
           "years": YEARS_HIST + [2026]}
     out = ("window.V2_DATA = " + j(v2) + ";\n" +
            "window.DOT_DATA = " + j({"records": dot_records}) + ";")
