@@ -639,6 +639,20 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const itemrelOpts = (dimsOpt.itemrels || []).map(v => ({ value: v, label: A.dispItemRel(v) }));
   const tcOpts = (dimsOpt.tcs || []).map(v => ({ value: v, label: v }));
   const clasOpts = (dimsOpt.clases || []).map(v => ({ value: v, label: v }));
+  // Toggle rápido "Incluir Mano de Obra" (coordinado con el filtro Clasificación Cuenta: ambos
+  // leen/escriben `clases`). clases=[] significa TODAS (incluye Mano de Obra). Por defecto la
+  // Mano de Obra está fuera (defaultClases), así que el check arranca desmarcado.
+  const MDO = 'Mano de Obra';
+  const hasMdO = clasOpts.some(o => o.value === MDO);
+  const mdoIncluida = clases.length === 0 || clases.includes(MDO);
+  const toggleMdO = () => {
+    const all = clasOpts.map(o => o.value);
+    if (!mdoIncluida) { setClases([...clases, MDO]); return; }
+    // Excluir MdO. Si el resultado quedara vacío ([] = todas → volvería a incluirla), se cae
+    // a "todas menos Mano de Obra" para respetar el destilde.
+    const keep = (clases.length ? clases : all).filter(c => c !== MDO);
+    setClases(keep.length ? keep : all.filter(c => c !== MDO));
+  };
   // Filtro por código CECO: acotado a VP/Gerencia activas + los ya seleccionados (aunque queden fuera).
   const cecoOpts = [...new Set([...(dimsOpt.cecos || []), ...cecos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
   const clacoOpts = [...new Set([...(dimsOpt.clacos || []), ...clacos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));   // filtro por código CLACO (Clase de Costo)
@@ -946,6 +960,12 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600, cursor: 'pointer' }}
                 title="Services & Tech (CLACOs 6125020/6125021). Desmarca para excluirlos del panel.">
                 <input type="checkbox" checked={stMode !== 'excl'} onChange={e => setStMode(e.target.checked ? '' : 'excl')} /> Incluir Services &amp; Tech
+              </label>
+            )}
+            {hasMdO && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600, cursor: 'pointer' }}
+                title="Mano de Obra (Clasificación Cuenta). Por defecto excluida; marca para incluirla. Coordinado con el filtro «Clasificación Cuenta».">
+                <input type="checkbox" checked={mdoIncluida} onChange={toggleMdO} /> Incluir Mano de Obra
               </label>
             )}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600, cursor: 'pointer' }}>
