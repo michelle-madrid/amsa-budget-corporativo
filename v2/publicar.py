@@ -5,10 +5,11 @@ publicar.py — Publica los dashboards por VP a la carpeta compartida (OneDrive/
 Corré esto DESPUÉS de dividir_por_vp.py. Copia SOLO los HTML (nunca los Excel).
 
 Reglas (pedidas):
-  · Solo actualiza las carpetas VP que YA EXISTEN en el destino (no crea VP nuevas).
-  · REEMPLAZA el/los Dashboard*.html dentro; NO borra carpetas ni otros archivos del destino.
-  · VP Finanzas (o cualquier VP con subcarpetas por Gerencia): también publica esas subcarpetas
-    (crea las que falten, reemplaza el HTML; no borra).
+  · Solo actualiza las carpetas VP que YA EXISTEN en el destino (no crea VP nuevas, no las borra).
+  · REEMPLAZA el/los Dashboard*.html dentro; no toca otros archivos del destino.
+  · VP con subcarpetas por Gerencia (ej. VP Finanzas): también publica esas subcarpetas (crea las
+    que falten). Y quita las subcarpetas de Gerencia OBSOLETAS (combos renombradas/fusionadas):
+    las que ya no existen en el repo y son carpetas de dashboard nuestras (tienen Dashboard*.html).
   · Nunca copia los Excel (BBDD *.xlsx).
 
 Uso:  python publicar.py
@@ -56,14 +57,26 @@ def main():
             continue
         n = _copiar_dashboards(src_vp, os.path.join(DEST, vp))   # dashboard principal de la VP
         ng = 0                                                    # subcarpetas por Gerencia
-        for sub in sorted(os.listdir(src_vp)):
-            src_sub = os.path.join(src_vp, sub)
-            if os.path.isdir(src_sub):
-                dst_sub = os.path.join(DEST, vp, sub)
-                os.makedirs(_long(dst_sub), exist_ok=True)         # crea si falta (no borra)
-                ng += _copiar_dashboards(src_sub, dst_sub)
+        src_subs = sorted(s for s in os.listdir(src_vp) if os.path.isdir(os.path.join(src_vp, s)))
+        for sub in src_subs:
+            dst_sub = os.path.join(DEST, vp, sub)
+            os.makedirs(_long(dst_sub), exist_ok=True)             # crea si falta (no borra)
+            ng += _copiar_dashboards(os.path.join(src_vp, sub), dst_sub)
+        # Si la VP tiene split por Gerencia, se quitan del destino las subcarpetas de Gerencia
+        # OBSOLETAS (combos renombradas/fusionadas): solo las que ya no existen en el repo y que
+        # son claramente carpetas de dashboard nuestras (tienen un Dashboard*.html). No toca la VP.
+        rm = 0
+        if src_subs:
+            src_set = set(src_subs)
+            dst_vp = os.path.join(DEST, vp)
+            for s in os.listdir(_long(dst_vp)):
+                dp = os.path.join(dst_vp, s)
+                if s not in src_set and os.path.isdir(_long(dp)) and \
+                   any(f.startswith("Dashboard") and f.endswith(".html") for f in os.listdir(_long(dp))):
+                    shutil.rmtree(_long(dp)); rm += 1
+                    print(f"      (quitada subcarpeta obsoleta en {vp}: {s})")
         total += n + ng
-        print(f"  - {vp}: {n} dashboard" + (f" + {ng} por Gerencia" if ng else ""))
+        print(f"  - {vp}: {n} dashboard" + (f" + {ng} por Gerencia" if ng else "") + (f" · {rm} obsoleta(s) quitada(s)" if rm else ""))
     print(f"\nLISTO. {total} archivos publicados (solo HTML; sin borrar nada del destino).")
 
 
