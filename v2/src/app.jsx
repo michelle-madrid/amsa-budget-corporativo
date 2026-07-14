@@ -737,7 +737,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           const dif = baseVal - v;
           const pct = baseVal ? dif / Math.abs(baseVal) : null;   // % Dif = Dif / base (Ppto 2027)
           out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, unit, dec)}</td>);
-          out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 0)}</td>);
+          out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 1)}</td>);
         }
       }
     });
