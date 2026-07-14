@@ -16,8 +16,9 @@ Cada archivo:
   · SIN Dotaciones (se vacía DOT_DATA → la pestaña "Dotaciones AMSA (FTE)" se oculta sola).
   · Título (H1 y pestaña del navegador) con el nombre de la VP.
 
-SUBVISTAS: además, un HTML extra dentro de la carpeta de una VP, filtrado por Gerencia
-  (ver SUBVISTAS). Ej.: "TICA" dentro de VP Finanzas = solo Gerencias TICA + TICA Corporativo.
+SPLIT POR GERENCIA: además, una VP puede dividirse por Gerencia en SUBCARPETAS dentro de su
+  carpeta (ver SPLIT_POR_GERENCIA). Ej.: VP Finanzas → una subcarpeta por Gerencia, con combos
+  (TICA = TICA + TICA Corporativo, etc.). Cada subcarpeta lleva su dashboard filtrado.
 Reutiliza el embebido (gzip+base64) y la plantilla del v3 vía construir_v2.
 """
 import os
@@ -29,12 +30,18 @@ OUT_DIR = os.path.join(B.V3_DIR, "por_vp")
 MODEL_UUID = next(u for u, (n, _) in B.ASSETS.items() if n == "model.js")
 _j = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))
 
-# Sub-vistas especiales: un HTML extra dentro de la carpeta de una VP, con SOLO las Gerencias
-# indicadas (estructura nueva). Un único archivo por sub-vista.
-SUBVISTAS = [
-    {"vp": "VP Finanzas", "titulo": "TICA", "archivo": "Dashboard TICA.html",
-     "gerencias": {"TICA", "TICA Corporativo"}},
-]
+# División interna de una VP por GERENCIA: dentro de su carpeta, una subcarpeta por Gerencia
+# (o combo) con su propio dashboard filtrado (estructura nueva). Las gerencias listadas en un
+# combo van JUNTAS bajo el nombre del grupo; el resto de las gerencias de la VP van cada una
+# en su propia subcarpeta. La gerencia que se llama igual que la VP se omite.
+SPLIT_POR_GERENCIA = {
+    "VP Finanzas": [
+        ("TICA", {"TICA", "TICA Corporativo"}),
+        ("Abastecimiento", {"Abastecimiento", "Gerencia de Abastecimiento Corporativo", "Gestión Servicios y Control"}),
+        ("Gcia de Planificación y Gestión", {"Gcia de Planificación y Gestión", "Gerencia Competitividad", "Programa competitividad de costos"}),
+        ("Grcia. Riesgos y Control Interno", {"Grcia. Riesgos y Control Interno", "Gerencia de Riesgos"}),
+    ],
+}
 
 
 def _extract(js, name):
@@ -178,21 +185,30 @@ def main():
     for vp, nr, nc, mb in generados:
         B.log(f"    {vp:42} {nr:5} regs · {nc:3} CECOs · {mb:4.1f} MB")
 
-    # Sub-vistas por Gerencia (un único HTML extra dentro de la carpeta de la VP).
-    for sv in SUBVISTAS:
-        gers = sv["gerencias"]
-        cnew = {c: m for c, m in cecoNew.items() if m.get("ger") in gers}   # define el alcance (estructura nueva)
-        cold = {c: m for c, m in cecoOld.items() if c in cnew}              # mismos CECOs, mapa antiguo (para el toggle)
-        cecos_sv = set(cnew)
-        recs = [r for r in V["records"] if r["ceco"] in cecos_sv]
-        if not recs:
-            B.log(f"  (subvista '{sv['titulo']}' en {sv['vp']}: sin registros, se omite)")
+    # División interna por GERENCIA: dentro de la carpeta de la VP, una subcarpeta por Gerencia
+    # (o combo) con su dashboard filtrado. Combos = gerencias juntas; el resto, cada una sola.
+    n_ger = 0
+    for vp_split, combos in SPLIT_POR_GERENCIA.items():
+        if vp_split not in por_vp:
+            B.log(f"  (split por Gerencia de '{vp_split}': la VP no tiene dashboard, se omite)")
             continue
-        fn = os.path.join(OUT_DIR, _safe(sv["vp"]), sv["archivo"])
-        mb = _escribir(html, model, LOGO, DET, DETP, V, recs, cold, cnew, sv["titulo"], fn)
-        B.log(f"  + Subvista '{sv['titulo']}' en {sv['vp']}: {len(recs)} regs · {len(cecos_sv)} CECOs · Gerencias {sorted(gers)} · {mb:.1f} MB")
+        gers_vp = sorted({m["ger"] for m in cecoNew.values()
+                          if m.get("vp") == vp_split and m.get("ger") and m["ger"] != vp_split})
+        en_combo = set().union(*[g for _, g in combos]) if combos else set()
+        grupos = list(combos) + [(g, {g}) for g in gers_vp if g not in en_combo]
+        for nombre, gset in grupos:
+            cnew = {c: m for c, m in cecoNew.items() if m.get("vp") == vp_split and m.get("ger") in gset}
+            cecos_g = set(cnew)
+            recs = [r for r in V["records"] if r["ceco"] in cecos_g]
+            if not recs:
+                continue
+            fn = os.path.join(OUT_DIR, _safe(vp_split), _safe(nombre), "Dashboard " + _safe(nombre) + ".html")
+            _escribir(html, model, LOGO, DET, DETP, V, recs,
+                      {c: m for c, m in cecoOld.items() if c in cecos_g}, cnew, nombre, fn)
+            n_ger += 1
+            B.log(f"    {vp_split} › {nombre:44} {len(recs):5} regs · {len(cecos_g):2} CECOs")
 
-    B.log(f"\n✓ LISTO. {len(generados)} dashboards por VP + {len(SUBVISTAS)} subvista(s) en {OUT_DIR}")
+    B.log(f"\n✓ LISTO. {len(generados)} dashboards por VP + {n_ger} por Gerencia en {OUT_DIR}")
 
 
 if __name__ == "__main__":
