@@ -41,6 +41,7 @@ SPLIT_POR_GERENCIA = {
         ("Gcia de Planificación y Gestión", {"Gcia de Planificación y Gestión", "Gerencia Competitividad", "Programa competitividad de costos"}),
         ("Grcia. Riesgos y Control Interno", {"Grcia. Riesgos y Control Interno", "Gerencia de Riesgos"}),
         ("Gerencia Planificación Financiera", {"Planif Financ Corp", "Gerencia Planificación Financiera"}),
+        ("Inversiones y Seguros", {"Gerencia de Inversiones & Finanzas", "Gestión de Seguros"}),
     ],
 }
 
