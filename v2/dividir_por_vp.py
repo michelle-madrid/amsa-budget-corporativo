@@ -45,6 +45,20 @@ SPLIT_POR_GERENCIA = {
     ],
 }
 
+# VISTA COMBINADA: el dashboard de una VP muestra data de VARIAS VPs (y/o solo ciertas gerencias
+# de otra VP). REEMPLAZA el dashboard estándar de esa VP. Estructura nueva.
+#   vps           = VPs completas incluidas.
+#   vp_gerencias  = de estas VPs, solo estas gerencias (ej. de VP Finanzas, solo TICA).
+#   sin_vp        = incluir además los CECOs sin VP (no mapeados en la estructura nueva).
+VISTAS_COMBINADAS = {
+    "VP Desarrollo de Negocios e Innovación": {
+        "vps": {"VP Desarrollo de Negocios e Innovación", "VP Planificación y Servicios Técnicos",
+                "VP Exploraciones y Recursos Mineros", "Exploraciones"},
+        "vp_gerencias": {"VP Finanzas": {"TICA", "TICA Corporativo"}},
+        "sin_vp": True,
+    },
+}
+
 
 def _extract(js, name):
     """Devuelve el valor JSON de `window.<name> = <json>;` dentro del texto del asset."""
@@ -174,6 +188,8 @@ def main():
     B.log(f"Dividiendo el v3 en {len(por_vp)} Vicepresidencias…")
     generados = []
     for vp, recs in sorted(por_vp.items()):
+        if vp in VISTAS_COMBINADAS:
+            continue   # su dashboard es una vista combinada (se genera aparte, más abajo)
         # Cada mapa de estructura se filtra por SU PROPIA VP (independiente del otro).
         cecosOld_vp = {c for c, m in cecoOld.items() if m.get("vp") == vp}
         cecosNew_vp = {c for c, m in cecoNew.items() if m.get("vp") == vp}
@@ -186,6 +202,27 @@ def main():
     B.log("  --- Dashboards por VP generados ---")
     for vp, nr, nc, mb in generados:
         B.log(f"    {vp:42} {nr:5} regs · {nc:3} CECOs · {mb:4.1f} MB")
+
+    # VISTAS COMBINADAS: reemplazan el dashboard estándar de esa VP con una vista que cruza
+    # varias VPs (y/o solo ciertas gerencias de otra VP), según VISTAS_COMBINADAS.
+    rec_cecos = {r["ceco"] for r in V["records"]}
+    for vp, cfg in VISTAS_COMBINADAS.items():
+        cset = set()
+        for c, m in cecoNew.items():
+            if m.get("vp") in cfg.get("vps", set()):
+                cset.add(c)
+            elif m.get("vp") in cfg.get("vp_gerencias", {}) and m.get("ger") in cfg["vp_gerencias"][m["vp"]]:
+                cset.add(c)
+        if cfg.get("sin_vp"):
+            cset |= {c for c in rec_cecos if c not in cecoNew}   # CECOs sin VP (no mapeados en la nueva)
+        recs = [r for r in V["records"] if r["ceco"] in cset]
+        fn = os.path.join(OUT_DIR, _safe(vp), "Dashboard " + _safe(vp) + ".html")
+        _escribir(html, model, LOGO, DET, DETP, V, recs,
+                  {c: m for c, m in cecoOld.items() if c in cset},
+                  {c: m for c, m in cecoNew.items() if c in cset}, vp, fn)
+        vistas_vp = sorted({cecoNew[c]["vp"] for c in cset if c in cecoNew and cecoNew[c].get("vp")}
+                           | ({"(sin VP)"} if any(c not in cecoNew for c in cset) else set()))
+        B.log(f"  + Vista combinada '{vp}': {len(recs)} regs · {len(cset)} CECOs · VPs visibles: {vistas_vp}")
 
     # División interna por GERENCIA: dentro de la carpeta de la VP, una subcarpeta por Gerencia
     # (o combo) con su dashboard filtrado. Combos = gerencias juntas; el resto, cada una sola.
