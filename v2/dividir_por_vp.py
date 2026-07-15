@@ -24,11 +24,36 @@ Reutiliza el embebido (gzip+base64) y la plantilla del v3 vía construir_v2.
 import os
 import re
 import json
+import stat
+import time
+import shutil
 import construir_v2 as B   # reutiliza V3_HTML/V3_DIR, DATA_UUID, ASSETS, _get_asset, _set_asset
 
 OUT_DIR = os.path.join(B.V3_DIR, "por_vp")
 MODEL_UUID = next(u for u, (n, _) in B.ASSETS.items() if n == "model.js")
 _j = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))
+
+
+def _rm_resiliente(ruta):
+    """Borra archivo o carpeta reintentando ante locks TRANSITORIOS (antivirus/OneDrive
+    escaneando el HTML recién escrito → WinError 32) y limpiando el bit read-only (WinError 5)."""
+    def onerror(func, p, exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+        except Exception:
+            pass
+        func(p)
+    for intento in range(4):
+        try:
+            if os.path.isdir(ruta):
+                shutil.rmtree(ruta, onerror=onerror)
+            elif os.path.isfile(ruta):
+                os.remove(ruta)
+            return
+        except PermissionError:
+            if intento == 3:
+                raise
+            time.sleep(0.6)
 
 # División interna de una VP por GERENCIA: dentro de su carpeta, una subcarpeta por Gerencia
 # (o combo) con su propio dashboard filtrado (estructura nueva). Las gerencias listadas en un
@@ -41,7 +66,12 @@ SPLIT_POR_GERENCIA = {
         ("Gcia de Planificación y Gestión", {"Gcia de Planificación y Gestión", "Gerencia Competitividad", "Programa competitividad de costos"}),
         ("Grcia. Riesgos y Control Interno", {"Grcia. Riesgos y Control Interno", "Gerencia de Riesgos"}),
         ("Gerencia Planificación Financiera", {"Planif Financ Corp", "Gerencia Planificación Financiera"}),
-        ("Inversiones y Seguros", {"Gerencia de Inversiones & Finanzas", "Gestión de Seguros", "Seguros Corporativos"}),
+        # Inversiones y Seguros = 3 unidades, cada una con su CECO Corporativo + sus 4 Distribuibles.
+        # OJO: los Distribuibles llevan en el campo Gerencia una etiqueta genérica distinta al Corp
+        # (Inversiones & Finanzas → "Finanzas"; Impuestos → "Gestión de Impuestos"; Seguros → "Gestión de Seguros").
+        ("Inversiones y Seguros", {"Gerencia de Inversiones & Finanzas", "Finanzas",     # Inversiones & Finanzas (Corp + Distrib.)
+                                   "Gerencia de Impuestos", "Gestión de Impuestos",       # Impuestos (Corp + Distrib.)
+                                   "Seguros Corporativos", "Gestión de Seguros"}),        # Seguros (Corp + Distrib.)
     ],
 }
 
@@ -178,13 +208,11 @@ def main():
 
     os.makedirs(OUT_DIR, exist_ok=True)
     # Limpieza de corridas anteriores (archivos planos y carpetas por VP).
+    # Resiliente: reintenta ante locks transitorios (antivirus/OneDrive) para no abortar la corrida.
     for nombre in os.listdir(OUT_DIR):
         ruta = os.path.join(OUT_DIR, nombre)
-        if os.path.isfile(ruta) and nombre.lower().endswith(".html"):
-            os.remove(ruta)
-        elif os.path.isdir(ruta):
-            import shutil
-            shutil.rmtree(ruta)
+        if (os.path.isfile(ruta) and nombre.lower().endswith(".html")) or os.path.isdir(ruta):
+            _rm_resiliente(ruta)
     B.log(f"Dividiendo el v3 en {len(por_vp)} Vicepresidencias…")
     generados = []
     for vp, recs in sorted(por_vp.items()):

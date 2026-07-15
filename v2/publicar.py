@@ -15,6 +15,7 @@ Reglas (pedidas):
 Uso:  python publicar.py
 """
 import os
+import stat
 import shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,14 @@ def _long(p):
     if p.startswith("\\\\?\\"):
         return p
     return "\\\\?\\" + os.path.abspath(p)
+
+
+def _rmtree_resiliente(path):
+    """rmtree que primero limpia el bit read-only (Windows). Lanza si no lo logra."""
+    def onerror(func, p, exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    shutil.rmtree(path, onerror=onerror)
 
 
 def _copiar_dashboards(src_dir, dst_dir):
@@ -73,8 +82,12 @@ def main():
                 dp = os.path.join(dst_vp, s)
                 if s not in src_set and os.path.isdir(_long(dp)) and \
                    any(f.startswith("Dashboard") and f.endswith(".html") for f in os.listdir(_long(dp))):
-                    shutil.rmtree(_long(dp)); rm += 1
-                    print(f"      (quitada subcarpeta obsoleta en {vp}: {s})")
+                    try:
+                        _rmtree_resiliente(_long(dp)); rm += 1
+                        print(f"      (quitada subcarpeta obsoleta en {vp}: {s})")
+                    except Exception as e:
+                        print(f"      OJO: no pude quitar la obsoleta '{vp}/{s}' "
+                              f"(quizá abierta o sincronizando en OneDrive): {e}. Quitala a mano.")
         total += n + ng
         print(f"  - {vp}: {n} dashboard" + (f" + {ng} por Gerencia" if ng else "") + (f" · {rm} obsoleta(s) quitada(s)" if rm else ""))
     print(f"\nLISTO. {total} archivos publicados (solo HTML; sin borrar nada del destino).")

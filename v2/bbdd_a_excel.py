@@ -2,15 +2,22 @@
 """
 bbdd_a_excel.py — Convierte la BBDD (v2/bbdd/*.parquet) en Excel para compartir.
 ================================================================================
-Pensado para usuarios NO técnicos: hojas legibles con los NOMBRES ya pegados (VP, Gerencia,
-Desc. CECO, Ítem, Desc. CLACO…), sin cruzar tablas. Formato amigable + hoja "Léame".
+Pensado para usuarios NO técnicos: DOS hojas, línea a línea, con los NOMBRES ya pegados
+(VP, Gerencia, Desc. CECO, Ítem…), sin cruzar tablas:
+  · «Reales»                  → gasto Real (2022–2025 y 2026 YTD).
+  · «Presupuestos y Forecast» → Ppto 2025/2026, Forecast 5+7 2026 y Ppto 2027.
+Más una hoja "Léame" de ayuda. Formato amigable (filtros, encabezados, freeze).
 
 Requiere haber corrido antes `python construir_v2.py` (genera v2/bbdd/).
 Uso:
-  python bbdd_a_excel.py             → 1 Excel global liviano (agregados + diccionarios)
-  python bbdd_a_excel.py --completo  → 1 Excel global + DETALLE línea-a-línea (~238k filas)
-  python bbdd_a_excel.py --por-vp    → 1 Excel POR VP (data completa de esa VP) en cada
-                                        v3/por_vp/<VP>/BBDD <VP>.xlsx  (apoyo del dashboard por VP)
+  python bbdd_a_excel.py --gerencia "Data y Analitica"  → Excel de ESA Gerencia en v3/
+  python bbdd_a_excel.py --vp "Comercializacion"        → Excel de ESA VP en v3/
+  python bbdd_a_excel.py --por-vp                        → 1 Excel por CADA VP en
+                                                           v3/por_vp/<VP>/BBDD <VP>.xlsx
+  python bbdd_a_excel.py                                 → 1 Excel global (todas juntas)
+
+El nombre de la Gerencia/VP se busca sin distinguir acentos ni mayúsculas y admite texto parcial
+(p.ej. "analitica" encuentra "Data y Analítica Avanzada"). El archivo se llama «BBDD <Nombre>.xlsx».
 
 El Excel usa SOLO la estructura NUEVA (la vigente): cada CECO se asigna a su VP de la
 estructura nueva. (Los pocos CECOs que solo existían en la estructura antigua no se incluyen.)
@@ -18,21 +25,23 @@ estructura nueva. (Los pocos CECOs que solo existían en la estructura antigua n
 import os
 import re
 import sys
+import unicodedata
 import pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BBDD = os.path.join(HERE, "bbdd")
-V3_POR_VP = os.path.join(os.path.dirname(HERE), "v3", "por_vp")
+V3_DIR = os.path.join(os.path.dirname(HERE), "v3")
+V3_POR_VP = os.path.join(V3_DIR, "por_vp")
 OUT_BASE = os.path.join(BBDD, "BBDD Dashboard Corporativo.xlsx")
-OUT_FULL = os.path.join(BBDD, "BBDD Dashboard Corporativo (con detalle).xlsx")
 
 TEAL = "14515A"
 BUCKET_LBL = {"2022": "2022", "2023": "2023", "2024": "2024", "2025": "2025",
               "2026ytd": "2026 YTD (ene–may)", "2026fy": "2026 FY (Ppto anual)"}
-MEDIDA_LBL = {"forecast_2026": "Forecast 5+7 2026", "ppto_2027": "Ppto 2027"}
-SRC_LBL = {"propios": "Propios", "contratista": "Contratista"}
+MEDIDA_LBL = {"ppto_2025": "Ppto 2025", "ppto_2026ytd": "Ppto 2026 YTD (ene–may)",
+              "ppto_2026fy": "Ppto 2026 FY (anual)", "forecast_2026": "Forecast 5+7 2026",
+              "ppto_2027": "Ppto 2027"}
 
 
 def log(m):
@@ -85,76 +94,39 @@ def _pegar(df, P):
     return df.merge(P["comp2"], on="codigo", how="left")
 
 
-def construir_hojas(dfs, P, completo, cecos=None):
-    """Arma (nombre_hoja, DataFrame, [cols de valor]). Si cecos ≠ None, filtra a esos CECOs
-    (modo por VP) y omite Dotaciones (usan otra convención de VP)."""
+def construir_hojas(dfs, P, cecos=None):
+    """Dos hojas, línea a línea, con los nombres ya pegados:
+      · «Reales»                  → gasto Real (2022–2025 y 2026 YTD), línea a línea.
+      · «Presupuestos y Forecast» → Ppto 2025/2026, Forecast 5+7 2026 y Ppto 2027, línea a línea.
+    Si cecos ≠ None, filtra a esos CECOs (modo por VP / por Gerencia)."""
     def filt(df):
         return df if cecos is None else df[df["ceco"].isin(cecos)]
 
-    hojas = []
+    # 1) Reales — gasto Real desglosado (Contrapartida › Texto pedido › Denominación › Documento).
+    dr = _pegar(filt(dfs["fact_detalle_real"]), P)
+    dr["Período"] = dr["bucket"].map(BUCKET_LBL).fillna(dr["bucket"])
+    reales = pd.DataFrame({
+        "VP": dr["vp"], "Gerencia": dr["gerencia"], "Desc. CECO": dr["desc_ceco"], "CECO": dr["ceco"],
+        "Ítem Relevante": dr["itemrel_nombre"], "Ítem": dr["item_nombre"], "Tipo Costo": dr["tipo_costo"],
+        "Contrapartida": dr["contra"], "Texto pedido": dr["texto_pedido"], "Denominación": dr["denominacion"],
+        "Documento": dr["documento"], "Período": dr["Período"],
+        "Real (USD)": dr["valor_n"], "Real (Aj. 2027)": dr["valor_a"],
+    })
 
-    # 1) Registros (Real + Ppto histórico).
-    r = _pegar(filt(dfs["fact_registros"]), P)
-    r["Período"] = r["bucket"].map(BUCKET_LBL).fillna(r["bucket"])
-    hojas.append(("Registros", pd.DataFrame({
-        "VP": r["vp"], "Gerencia": r["gerencia"], "Desc. CECO": r["desc_ceco"], "CECO": r["ceco"],
-        "Compañía": r["compania_nombre"], "Ítem Relevante": r["itemrel_nombre"], "Ítem": r["item_nombre"],
-        "Cód. Ítem": r["item"], "Tipo Costo": r["tipo_costo"], "Clasif. Cuenta": r["clasif_cuenta"],
-        "Desc. CLACO": r["desc_claco"], "CLACO": r["claco"], "Contrapartida": r["contra"], "Período": r["Período"],
-        "Real (USD)": r["real_n"], "Real (Aj. 2027)": r["real_a"], "Ppto (USD)": r["plan_n"], "Ppto (Aj. 2027)": r["plan_a"],
-    }), ["Real (USD)", "Real (Aj. 2027)", "Ppto (USD)", "Ppto (Aj. 2027)"]))
+    # 2) Presupuestos y Forecast — Ppto/Forecast desglosado (Concepto Gasto › Actividad).
+    dp = _pegar(filt(dfs["fact_detalle_ppto"]), P)
+    dp["Medida"] = dp["medida"].map(MEDIDA_LBL).fillna(dp["medida"])
+    ppto = pd.DataFrame({
+        "VP": dp["vp"], "Gerencia": dp["gerencia"], "Desc. CECO": dp["desc_ceco"], "CECO": dp["ceco"],
+        "Ítem Relevante": dp["itemrel_nombre"], "Ítem": dp["item_nombre"], "Tipo Costo": dp["tipo_costo"],
+        "Concepto Gasto": dp["concepto_gasto"], "Actividad": dp["actividad"], "Medida": dp["Medida"],
+        "Valor (USD)": dp["valor_n"], "Valor (Aj. 2027)": dp["valor_a"],
+    })
 
-    # 2) Forecast y Ppto 2027 (anual).
-    a = _pegar(filt(dfs["fact_anual"]), P)
-    hojas.append(("Forecast y Ppto 2027", pd.DataFrame({
-        "VP": a["vp"], "Gerencia": a["gerencia"], "Desc. CECO": a["desc_ceco"], "CECO": a["ceco"],
-        "Compañía": a["compania_nombre"], "Ítem Relevante": a["itemrel_nombre"], "Ítem": a["item_nombre"],
-        "Cód. Ítem": a["item"], "Tipo Costo": a["tipo_costo"], "Desc. CLACO": a["desc_claco"], "CLACO": a["claco"],
-        "Medida": a["medida"].map(MEDIDA_LBL).fillna(a["medida"]),
-        "Valor (USD)": a["valor_n"], "Valor (Aj. 2027)": a["valor_a"],
-    }), ["Valor (USD)", "Valor (Aj. 2027)"]))
-
-    # 3) Dotaciones (FTE) — solo en el Excel global (usan convención de VP distinta).
-    if cecos is None:
-        dot = dfs["fact_dotaciones"]
-        hojas.append(("Dotaciones (FTE)", pd.DataFrame({
-            "Tipo": dot["src"].map(SRC_LBL).fillna(dot["src"]), "VP": dot["vp"], "Gerencia": dot["ger"],
-            "Año": dot["year"], "Período": dot["period"], "Real (FTE)": dot["real"], "Ppto (FTE)": dot["plan"],
-        }), ["Real (FTE)", "Ppto (FTE)"]))
-
-    # 4-7) Diccionarios (dim_cecos: SOLO estructura nueva/vigente; acotado a los CECOs del archivo).
-    cec = dfs["dim_cecos"]
-    cec = cec[cec.estructura == "new"].drop(columns=["estructura"])
-    if cecos is not None:
-        cec = cec[cec.ceco.isin(cecos)]
-    hojas.append(("Dicc. CECOs", cec.rename(columns={
-        "ceco": "CECO", "vp": "VP", "gerencia": "Gerencia", "desc_ceco": "Desc. CECO",
-        "tipo_costo": "Tipo Costo", "aplica": "¿Aplica?", "clasificacion": "Clasificación", "compania": "Cód. Compañía"}), []))
-    hojas.append(("Dicc. Ítems", dfs["dim_items"].rename(columns={
-        "item": "Cód. Ítem", "nombre": "Ítem", "tipo_costo": "Tipo Costo", "item_relevante": "Cód. Ítem Relevante",
-        "item_relevante_nombre": "Ítem Relevante", "clasif_cuenta": "Clasif. Cuenta"}), []))
-    hojas.append(("Dicc. CLACOs", dfs["dim_clacos"].rename(columns={"claco": "CLACO", "desc_claco": "Desc. CLACO"}), []))
-    hojas.append(("Dicc. Compañías", dfs["dim_companias"].rename(columns={
-        "codigo": "Código", "nombre": "Nombre", "abrev": "Abrev.", "clasificacion": "Clasificación"}), []))
-
-    # 8-9) Detalle línea-a-línea (con --completo o por VP).
-    if completo:
-        dr = _pegar(filt(dfs["fact_detalle_real"]), P)
-        dr["Período"] = dr["bucket"].map(BUCKET_LBL).fillna(dr["bucket"])
-        hojas.append(("Detalle Real", pd.DataFrame({
-            "VP": dr["vp"], "Gerencia": dr["gerencia"], "Desc. CECO": dr["desc_ceco"], "CECO": dr["ceco"],
-            "Ítem": dr["item_nombre"], "Contrapartida": dr["contra"], "Texto pedido": dr["texto_pedido"],
-            "Denominación": dr["denominacion"], "Documento": dr["documento"], "Período": dr["Período"],
-            "Real (USD)": dr["valor_n"], "Real (Aj. 2027)": dr["valor_a"],
-        }), ["Real (USD)", "Real (Aj. 2027)"]))
-        dp = filt(dfs["fact_detalle_ppto"]).merge(P["itm2"][["item", "item_nombre"]], on="item", how="left")
-        hojas.append(("Detalle Ppto", pd.DataFrame({
-            "CECO": dp["ceco"], "Ítem": dp["item_nombre"], "Concepto Gasto": dp["concepto_gasto"],
-            "Actividad": dp["actividad"], "Medida": dp["medida"].map(MEDIDA_LBL).fillna(dp["medida"]),
-            "Valor (USD)": dp["valor_n"], "Valor (Aj. 2027)": dp["valor_a"],
-        }), ["Valor (USD)", "Valor (Aj. 2027)"]))
-
-    return hojas
+    return [
+        ("Reales", reales, ["Real (USD)", "Real (Aj. 2027)"]),
+        ("Presupuestos y Forecast", ppto, ["Valor (USD)", "Valor (Aj. 2027)"]),
+    ]
 
 
 def _formatear(ws, valcols, headers):
@@ -176,88 +148,105 @@ def _formatear(ws, valcols, headers):
                     row[0].number_format = fmt
 
 
-def _hoja_leeme(ws, hojas, completo, titulo):
-    ws.sheet_view.showGridLines = False
-    ws["A1"] = titulo
-    ws["A1"].font = Font(bold=True, size=15, color=TEAL)
-    intro = ["",
-             "Extracto de la base de datos del tablero, en un solo Excel.",
-             "Cada hoja ya trae los NOMBRES (VP, Gerencia, Ítem, Desc. CLACO…): no hace falta cruzar nada.",
-             "Valores en USD. «Aj. 2027» = misma cifra reexpresada a moneda equivalente 2027.",
-             "Generado con bbdd_a_excel.py a partir de v2/bbdd/ (regenerable).", ""]
-    r = 2
-    for t in intro:
-        ws.cell(row=r, column=1, value=t); r += 1
-    for j, h in enumerate(("Hoja", "Qué contiene"), start=1):
-        c = ws.cell(row=r, column=j, value=h)
-        c.font, c.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor=TEAL)
-    r += 1
-    desc = {
-        "Registros": "Real y Presupuesto histórico (2022–2025, 2026 YTD y 2026 FY) por CECO / Ítem / CLACO / Contrapartida.",
-        "Forecast y Ppto 2027": "Forecast 5+7 2026 y Presupuesto 2027 (anual) por CECO / Ítem / CLACO.",
-        "Dotaciones (FTE)": "Dotación (personas) Propios y Contratista por VP / Gerencia, año y período.",
-        "Dicc. CECOs": "Catálogo de CECO: VP, Gerencia, Desc. CECO (estructura nueva/vigente).",
-        "Dicc. Ítems": "Catálogo de Ítem: nombre, Tipo Costo, Ítem Relevante, Clasificación Cuenta.",
-        "Dicc. CLACOs": "Catálogo de CLACO (Clase de Costo) → Desc. CLACO.",
-        "Dicc. Compañías": "Catálogo de compañías.",
-        "Detalle Real": "Gasto Real línea a línea (Contrapartida › Texto pedido › Denominación › Documento).",
-        "Detalle Ppto": "Presupuesto/Forecast a nivel Concepto Gasto › Actividad.",
-    }
-    for name, _df, _v in hojas:
-        ws.cell(row=r, column=1, value=name)
-        ws.cell(row=r, column=2, value=desc.get(name, "")); r += 1
-    if not completo:
-        ws.cell(row=r + 1, column=1,
-                value="Nota: el detalle línea-a-línea no se incluyó (archivo liviano). Para agregarlo: "
-                      "python bbdd_a_excel.py --completo")
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 95
-
-
-def escribir_excel(out, hojas, completo, titulo):
+def escribir_excel(out, hojas):
+    """Escribe las hojas (Reales + Presupuestos y Forecast). Sin hoja Léame."""
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with pd.ExcelWriter(out, engine="openpyxl") as xw:
         for name, df, valcols in hojas:
             df.to_excel(xw, sheet_name=name[:31], index=False)
             _formatear(xw.book[name[:31]], valcols, list(df.columns))
-        _hoja_leeme(xw.book.create_sheet("Léame", 0), hojas, completo, titulo)
         if "Sheet" in xw.book.sheetnames:
             del xw.book["Sheet"]
     return os.path.getsize(out) / 1e6
 
 
-def main():
-    por_vp = "--por-vp" in sys.argv
-    completo = "--completo" in sys.argv
+# ── Generar el Excel de UNA Gerencia o VP puntual ──────────────────────────────────────────
+def _norm(s):
+    """Normaliza para comparar: sin acentos, minúsculas, sin espacios sobrantes."""
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.casefold().split())
 
+
+def _resolver(P, texto, por):
+    """Encuentra la Gerencia/VP que coincide con `texto` (sin distinguir acentos/mayúsculas).
+    `por` ∈ {'gerencia', 'vp'}. Coincidencia exacta primero; si no, por substring."""
+    col = "gerencia" if por == "gerencia" else "vp"
+    opciones = sorted(P["cec_enrich"][col].dropna().astype(str).unique())
+    q = _norm(texto)
+    cand = [o for o in opciones if _norm(o) == q] or [o for o in opciones if q in _norm(o)]
+    if not cand:
+        raise SystemExit(f'No encontré ninguna {por} que coincida con "{texto}".\n'
+                         f'  Opciones: ' + " | ".join(opciones))
+    if len(cand) > 1:
+        raise SystemExit(f'"{texto}" coincide con varias: ' + " | ".join(cand) + "\n  Afiná el texto.")
+    return cand[0]
+
+
+def generar(texto, por="gerencia", out_dir=None, dfs=None, P=None):
+    """Genera el Excel (Reales + Presupuestos y Forecast) de una Gerencia o VP y lo guarda en v3/.
+    Uso desde código:  bbdd_a_excel.generar("Data y Analitica")            → por Gerencia
+                       bbdd_a_excel.generar("Comercializacion", por="vp")  → por VP
+    Devuelve la ruta del archivo generado."""
+    if dfs is None:
+        log("Leyendo BBDD…")
+        dfs = cargar(con_detalle=True)
+    if P is None:
+        P = preparar(dfs)
+    nombre = _resolver(P, texto, por)
+    col = "gerencia" if por == "gerencia" else "vp"
+    cecos = set(P["cec_enrich"].loc[P["cec_enrich"][col] == nombre, "ceco"])
+    hojas = construir_hojas(dfs, P, cecos=cecos)
+    out = os.path.join(out_dir or V3_DIR, "BBDD " + _safe(nombre) + ".xlsx")
+    mb = escribir_excel(out, hojas)
+    log(f"\nLISTO ({por}): {nombre}")
+    log(f"  {out}")
+    log(f"  {mb:.2f} MB · {len(cecos)} CECO(s) · " +
+        " · ".join(f"{name} {len(df):,}" for name, df, _v in hojas))
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+
+    # Excel de UNA Gerencia o VP:  python bbdd_a_excel.py --gerencia "Data y Analitica"
+    for flag, por in (("--gerencia", "gerencia"), ("--vp", "vp")):
+        if flag in args:
+            i = args.index(flag)
+            texto = args[i + 1] if i + 1 < len(args) else None
+            if not texto:
+                raise SystemExit(f'Uso: python bbdd_a_excel.py {flag} "Nombre"')
+            generar(texto, por=por)
+            return
+
+    por_vp = "--por-vp" in args
     log("Leyendo BBDD…")
-    dfs = cargar(con_detalle=(completo or por_vp))
+    dfs = cargar(con_detalle=True)   # las 2 hojas son siempre línea a línea
     P = preparar(dfs)
 
     if not por_vp:
-        out = OUT_FULL if completo else OUT_BASE
-        hojas = construir_hojas(dfs, P, completo)
-        mb = escribir_excel(out, hojas, completo, "BBDD del Dashboard Corporativo · Ppto 2027")
-        log(f"\n✓ LISTO: {out} ({mb:.1f} MB · {len(hojas)} hojas)")
+        hojas = construir_hojas(dfs, P)
+        mb = escribir_excel(OUT_BASE, hojas)
+        log(f"\nLISTO: {OUT_BASE} ({mb:.1f} MB · {len(hojas)} hojas)")
         return
 
-    # --por-vp: cada CECO → su VP de la estructura nueva; un Excel COMPLETO por VP.
+    # --por-vp: cada CECO → su VP de la estructura nueva; un Excel por VP (Reales + Ppto/Forecast).
     cec_vp = P["cec_enrich"][["ceco", "vp"]].dropna()
     grupos = cec_vp.groupby("vp")["ceco"].apply(set)
-    log(f"Generando Excel por VP (data completa) — {len(grupos)} VPs…")
+    log(f"Generando Excel por VP — {len(grupos)} VPs…")
     total = 0.0
     n = 0
     for vp, cecos in grupos.items():
-        hojas = construir_hojas(dfs, P, completo=True, cecos=cecos)
-        nreg = len(hojas[0][1])
-        if nreg == 0:   # VP sin datos (p.ej. CECO nuevo sin movimientos) → no genera Excel vacío
-            log(f"    {vp:44} (0 registros — se omite)")
+        hojas = construir_hojas(dfs, P, cecos=cecos)
+        nfilas = sum(len(df) for _n, df, _v in hojas)
+        if nfilas == 0:   # VP sin datos (p.ej. CECO nuevo sin movimientos) → no genera Excel vacío
+            log(f"    {vp:44} (0 filas — se omite)")
             continue
         out = os.path.join(V3_POR_VP, _safe(vp), "BBDD " + _safe(vp) + ".xlsx")
-        mb = escribir_excel(out, hojas, True, f"BBDD · {vp} · Ppto 2027")
+        mb = escribir_excel(out, hojas)
         total += mb; n += 1
-        log(f"    {vp:44} {len(cecos):3} CECOs · {nreg:6,} regs · {mb:4.1f} MB")
-    log(f"\n✓ LISTO. {n} Excel por VP en {V3_POR_VP} ({total:.0f} MB en total)")
+        log(f"    {vp:44} {len(cecos):3} CECOs · {nfilas:7,} filas · {mb:4.1f} MB")
+    log(f"\nLISTO. {n} Excel por VP en {V3_POR_VP} ({total:.0f} MB en total)")
 
 
 if __name__ == "__main__":
