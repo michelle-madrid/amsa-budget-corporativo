@@ -42,13 +42,22 @@ def _rmtree_resiliente(path):
 
 
 def _copiar_dashboards(src_dir, dst_dir):
-    """Copia solo Dashboard*.html de src_dir a dst_dir (reemplaza). No borra nada."""
-    n = 0
-    for f in os.listdir(src_dir):
-        if f.startswith("Dashboard") and f.endswith(".html"):
-            shutil.copy2(os.path.join(src_dir, f), _long(os.path.join(dst_dir, f)))
-            n += 1
-    return n
+    """Copia los Dashboard*.html de src_dir a dst_dir (reemplaza) y QUITA del destino los
+    Dashboard*.html VIEJOS cuyo nombre ya no existe en el repo (renombres de Gerencia), para que
+    cada carpeta quede con UN solo dashboard, el vigente. NUNCA toca carpetas ni otros archivos
+    (Excel, etc.): solo elimina archivos 'Dashboard*.html' que quedaron obsoletos por un renombre."""
+    src_dash = [f for f in os.listdir(src_dir) if f.startswith("Dashboard") and f.endswith(".html")]
+    for f in src_dash:
+        shutil.copy2(os.path.join(src_dir, f), _long(os.path.join(dst_dir, f)))
+    src_set = set(src_dash)
+    for f in os.listdir(_long(dst_dir)):
+        if f.startswith("Dashboard") and f.endswith(".html") and f not in src_set:
+            try:
+                os.remove(_long(os.path.join(dst_dir, f)))
+                print(f"      (quitado dashboard viejo por renombre: {f})")
+            except Exception as e:
+                print(f"      OJO: no pude quitar el dashboard viejo '{f}': {e}")
+    return len(src_dash)
 
 
 def main():
@@ -71,23 +80,10 @@ def main():
             dst_sub = os.path.join(DEST, vp, sub)
             os.makedirs(_long(dst_sub), exist_ok=True)             # crea si falta (no borra)
             ng += _copiar_dashboards(os.path.join(src_vp, sub), dst_sub)
-        # Si la VP tiene split por Gerencia, se quitan del destino las subcarpetas de Gerencia
-        # OBSOLETAS (combos renombradas/fusionadas): solo las que ya no existen en el repo y que
-        # son claramente carpetas de dashboard nuestras (tienen un Dashboard*.html). No toca la VP.
+        # BORRADO DESACTIVADO (pedido de la usuaria, 2026-07-15): NUNCA se eliminan subcarpetas del
+        # destino. Aunque una Gerencia se renombre en CECOS y su carpeta vieja quede huérfana, se
+        # CONSERVA. publicar.py solo AGREGA/REEMPLAZA dashboards; jamás borra carpetas de OneDrive.
         rm = 0
-        if src_subs:
-            src_set = set(src_subs)
-            dst_vp = os.path.join(DEST, vp)
-            for s in os.listdir(_long(dst_vp)):
-                dp = os.path.join(dst_vp, s)
-                if s not in src_set and os.path.isdir(_long(dp)) and \
-                   any(f.startswith("Dashboard") and f.endswith(".html") for f in os.listdir(_long(dp))):
-                    try:
-                        _rmtree_resiliente(_long(dp)); rm += 1
-                        print(f"      (quitada subcarpeta obsoleta en {vp}: {s})")
-                    except Exception as e:
-                        print(f"      OJO: no pude quitar la obsoleta '{vp}/{s}' "
-                              f"(quizá abierta o sincronizando en OneDrive): {e}. Quitala a mano.")
         total += n + ng
         print(f"  - {vp}: {n} dashboard" + (f" + {ng} por Gerencia" if ng else "") + (f" · {rm} obsoleta(s) quitada(s)" if rm else ""))
     print(f"\nLISTO. {total} archivos publicados (solo HTML; sin borrar nada del destino).")

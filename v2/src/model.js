@@ -584,7 +584,7 @@
 
     // Jerarquía configurable (ej. ['vp','ger','item'] o ['item','vp','ger']).
     const dims = (opts.groupBy && opts.groupBy.length) ? opts.groupBy : ['vp', 'ger', 'item'];
-    const DISPM = { vp: dispVP, ger: dispGer, dceco: n => n, itemrel: dispItemRel, item: dispItem, ceco: n => n, contra: n => n, claco: dispClaco };
+    const DISPM = { vp: dispVP, ger: dispGer, dceco: n => n, itemrel: dispItemRel, item: dispItem, ceco: n => n, contra: n => n, claco: dispClaco, clacocod: n => n };
 
     // Orden configurable por columna (key: name|real|version|dif|pct).
     const sort = opts.sort || { key: 'real', dir: 'desc' };
@@ -615,7 +615,7 @@
     function group(recs, depth) {
       const map = new Map(), order = [];
       recs.forEach(rec => {
-        const k = rec[dims[depth]];
+        const k = rec[dims[depth] === 'clacocod' ? 'claco' : dims[depth]];   // «CLACO» (código) agrupa por el mismo campo que «Desc. CLACO»
         if (!map.has(k)) { map.set(k, []); order.push(k); }
         map.get(k).push(rec);
       });

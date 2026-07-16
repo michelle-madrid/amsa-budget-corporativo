@@ -60,19 +60,25 @@ def _rm_resiliente(ruta):
 # combo van JUNTAS bajo el nombre del grupo; el resto de las gerencias de la VP van cada una
 # en su propia subcarpeta. La gerencia que se llama igual que la VP se omite.
 SPLIT_POR_GERENCIA = {
-    "VP Finanzas": [
-        ("TICA", {"TICA", "TICA Corporativo"}),
-        ("Abastecimiento", {"Abastecimiento", "Gerencia de Abastecimiento Corporativo", "Gestión Servicios y Control"}),
-        ("Gcia de Planificación y Gestión", {"Gcia de Planificación y Gestión", "Gerencia Competitividad", "Programa competitividad de costos"}),
-        ("Grcia. Riesgos y Control Interno", {"Grcia. Riesgos y Control Interno", "Gerencia de Riesgos"}),
-        ("Gerencia Planificación Financiera", {"Planif Financ Corp", "Gerencia Planificación Financiera"}),
-        # Inversiones y Seguros = 3 unidades, cada una con su CECO Corporativo + sus 4 Distribuibles.
-        # OJO: los Distribuibles llevan en el campo Gerencia una etiqueta genérica distinta al Corp
-        # (Inversiones & Finanzas → "Finanzas"; Impuestos → "Gestión de Impuestos"; Seguros → "Gestión de Seguros").
-        ("Inversiones y Seguros", {"Gerencia de Inversiones & Finanzas", "Finanzas",     # Inversiones & Finanzas (Corp + Distrib.)
-                                   "Gerencia de Impuestos", "Gestión de Impuestos",       # Impuestos (Corp + Distrib.)
-                                   "Seguros Corporativos", "Gestión de Seguros"}),        # Seguros (Corp + Distrib.)
+    # VP Finanzas: una carpeta por Gerencia con su NOMBRE EXACTO. Deben calzar con las carpetas ya
+    # compartidas en OneDrive (NO cambiar los nombres — solo el contenido). Sin combos: los nombres
+    # de Gerencia ya vienen consolidados desde CECOS. Excepciones abajo (dividir por Desc. CECO / omitir).
+    "VP Finanzas": [],
+}
+
+# Gerencias que se DIVIDEN por Desc. CECO en carpetas de NOMBRE FIJO (calzan con OneDrive).
+# (vp, gerencia) -> [(nombre_carpeta, keyword_en_Desc.CECO | None)]. La keyword se busca como
+# substring sin distinguir mayúsculas; None = "el resto" (los CECOs no capturados por las anteriores).
+SPLIT_GERENCIA_POR_DESC = {
+    ("VP Finanzas", "Gerencia Administración y Finanzas"): [
+        ("Gerencia Administración y Finanzas (Impuestos)", "impuesto"),
+        ("Gerencia Administración y Finanzas (Inversiones y Seguros)", None),
     ],
+}
+
+# Gerencias que NO llevan carpeta propia (no existen como carpeta en la estructura de OneDrive).
+GERENCIAS_SIN_CARPETA = {
+    ("VP Finanzas", "Gestión Servicios de Terceros"),
 }
 
 # VISTA COMBINADA: el dashboard de una VP muestra data de VARIAS VPs (y/o solo ciertas gerencias
@@ -263,17 +269,35 @@ def main():
                           if m.get("vp") == vp_split and m.get("ger") and m["ger"] != vp_split})
         en_combo = set().union(*[g for _, g in combos]) if combos else set()
         grupos = list(combos) + [(g, {g}) for g in gers_vp if g not in en_combo]
-        for nombre, gset in grupos:
-            cnew = {c: m for c, m in cecoNew.items() if m.get("vp") == vp_split and m.get("ger") in gset}
-            cecos_g = set(cnew)
-            recs = [r for r in V["records"] if r["ceco"] in cecos_g]
+        def _emitir_ger(sub_nombre, cset):
+            recs = [r for r in V["records"] if r["ceco"] in cset]
             if not recs:
-                continue
-            fn = os.path.join(OUT_DIR, _safe(vp_split), _safe(nombre), "Dashboard " + _safe(nombre) + ".html")
+                return 0
+            fn = os.path.join(OUT_DIR, _safe(vp_split), _safe(sub_nombre), "Dashboard " + _safe(sub_nombre) + ".html")
             _escribir(html, model, LOGO, DET, DETP, V, recs,
-                      {c: m for c, m in cecoOld.items() if c in cecos_g}, cnew, nombre, fn)
-            n_ger += 1
-            B.log(f"    {vp_split} › {nombre:44} {len(recs):5} regs · {len(cecos_g):2} CECOs")
+                      {c: m for c, m in cecoOld.items() if c in cset},
+                      {c: m for c, m in cecoNew.items() if c in cset}, sub_nombre, fn)
+            B.log(f"    {vp_split} › {sub_nombre:52} {len(recs):5} regs · {len(cset):2} CECOs")
+            return 1
+
+        for nombre, gset in grupos:
+            if (vp_split, nombre) in GERENCIAS_SIN_CARPETA:      # sin carpeta en OneDrive → se omite
+                continue
+            cecos_g = {c for c, m in cecoNew.items() if m.get("vp") == vp_split and m.get("ger") in gset}
+            split = SPLIT_GERENCIA_POR_DESC.get((vp_split, nombre))
+            if split:   # dividir esta Gerencia por Desc. CECO en carpetas de NOMBRE FIJO
+                resto = set(cecos_g)
+                for sub_nombre, kw in split:
+                    if kw is None:
+                        continue
+                    cset = {c for c in cecos_g if kw.lower() in (cecoNew[c].get("dceco") or "").lower()}
+                    resto -= cset
+                    n_ger += _emitir_ger(sub_nombre, cset)
+                for sub_nombre, kw in split:
+                    if kw is None:                               # "el resto" (lo no capturado arriba)
+                        n_ger += _emitir_ger(sub_nombre, resto)
+            else:
+                n_ger += _emitir_ger(nombre, cecos_g)
 
     B.log(f"\n✓ LISTO. {len(generados)} dashboards por VP + {n_ger} por Gerencia en {OUT_DIR}")
 

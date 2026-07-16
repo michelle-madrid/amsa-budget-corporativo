@@ -60,6 +60,122 @@ function _xlsx(sheetName, headers, rows) {
   ]);
 }
 
+/* ---------- Estilos .xlsx (colores del dashboard) ----------
+   Construye xl/styles.xml replicando los colores de la tabla en pantalla:
+   encabezados teal/gris/amarillo/teal-oscuro, filas de nivel/total resaltadas y
+   Dif/% Dif en verde (bajo ppto) / rojo (sobre ppto), igual que el semáforo del panel.
+   Devuelve helpers que registran y deduplican los cellXfs y luego emiten el XML. */
+function _buildSheetStyles(dec) {
+  const dp = dec > 0 ? '.' + '0'.repeat(dec) : '';
+  const numFmts = [
+    `<numFmt numFmtId="164" formatCode="#,##0${dp}"/>`,
+    `<numFmt numFmtId="165" formatCode="+#,##0${dp};\\-#,##0${dp};0"/>`,
+    `<numFmt numFmtId="166" formatCode="+#,##0.0&quot;%&quot;;\\-#,##0.0&quot;%&quot;;0&quot;%&quot;"/>`,
+  ];
+  const fnt = (rgb, bold, sz) => `<font>${bold ? '<b/>' : ''}<sz val="${sz || 11}"/><color rgb="${rgb}"/><name val="Calibri"/><family val="2"/></font>`;
+  const INK = 'FF1F2428', WHITE = 'FFFFFFFF', YINK = 'FF3A2E10', GREEN = 'FF1F9D57', RED = 'FFDC3545', SOFT = 'FF8A9499', CODEC = 'FF5B5C64';
+  const F = { base: 0, boldInk: 1, hWhite: 2, hDark: 3, green: 4, greenB: 5, red: 6, redB: 7, soft: 8, softB: 9, code: 10, codeB: 11 };
+  const fonts = [
+    fnt(INK, false), fnt(INK, true), fnt(WHITE, true), fnt(YINK, true),
+    fnt(GREEN, false), fnt(GREEN, true), fnt(RED, false), fnt(RED, true),
+    fnt(SOFT, false), fnt(SOFT, true), fnt(CODEC, false, 10), fnt(CODEC, true, 10),
+  ];
+  const solid = rgb => `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
+  const FILL = { none: 0, gray125: 1, teal: 2, gray: 3, yellow: 4, tealD: 5, total: 6, lvl1: 7 };
+  const fills = [
+    `<fill><patternFill patternType="none"/></fill>`,
+    `<fill><patternFill patternType="gray125"/></fill>`,
+    solid('FF2A8A96'), solid('FF717981'), solid('FFF0A929'), solid('FF14515A'),
+    solid('FFE7ECEE'), solid('FFEAF2F3'),
+  ];
+  const GRID = 'FFDCE1E4', TEALD = 'FF14515A';
+  const bAll = (style, rgb) => `<border><left style="${style}"><color rgb="${rgb}"/></left><right style="${style}"><color rgb="${rgb}"/></right><top style="${style}"><color rgb="${rgb}"/></top><bottom style="${style}"><color rgb="${rgb}"/></bottom><diagonal/></border>`;
+  const BORD = { none: 0, grid: 1, hdr: 2, total: 3 };
+  const borders = [
+    `<border><left/><right/><top/><bottom/><diagonal/></border>`,
+    bAll('thin', GRID),
+    bAll('thin', WHITE),
+    `<border><left style="thin"><color rgb="${GRID}"/></left><right style="thin"><color rgb="${GRID}"/></right><top style="medium"><color rgb="${TEALD}"/></top><bottom style="thin"><color rgb="${GRID}"/></bottom><diagonal/></border>`,
+  ];
+  const xfs = [];
+  const key2idx = Object.create(null);
+  const alignXml = a => a === 'L' ? '<alignment horizontal="left" vertical="center"/>'
+    : a === 'R' ? '<alignment horizontal="right" vertical="center"/>'
+    : a === 'C' ? '<alignment horizontal="center" vertical="center" wrapText="1"/>'
+    : a === 'LC' ? '<alignment horizontal="left" vertical="center" wrapText="1"/>' : '';
+  const reg = (nf, f, fl, b, a) => {
+    const k = nf + ':' + f + ':' + fl + ':' + b + ':' + (a || '');
+    if (k in key2idx) return key2idx[k];
+    const al = alignXml(a);
+    const xf = `<xf numFmtId="${nf}" fontId="${f}" fillId="${fl}" borderId="${b}" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"${al ? ' applyAlignment="1"' : ''}>${al}</xf>`;
+    key2idx[k] = xfs.length; xfs.push(xf); return key2idx[k];
+  };
+  reg(0, F.base, FILL.none, BORD.none, '');   // índice 0 = estilo por defecto
+  const signFont = (sign, bold) => sign < 0 ? (bold ? F.greenB : F.green) : sign > 0 ? (bold ? F.redB : F.red) : (bold ? F.softB : F.soft);
+  return {
+    FILL, BORD,
+    hdrStruct: reg(0, F.hWhite, FILL.teal, BORD.hdr, 'LC'),
+    hdrBase: reg(0, F.hWhite, FILL.gray, BORD.hdr, 'C'),
+    hdrPpto: reg(0, F.hDark, FILL.yellow, BORD.hdr, 'C'),
+    hdrDif: reg(0, F.hWhite, FILL.tealD, BORD.hdr, 'C'),
+    name: (bold, fl, b) => reg(0, bold ? F.boldInk : F.base, fl, b, 'L'),
+    code: (bold, fl, b) => reg(0, bold ? F.codeB : F.code, fl, b, 'L'),
+    num: (bold, fl, b) => reg(164, bold ? F.boldInk : F.base, fl, b, 'R'),
+    dif: (sign, bold, fl, b) => reg(165, signFont(sign, bold), fl, b, 'R'),
+    difPlain: (bold, fl, b) => reg(165, bold ? F.boldInk : F.base, fl, b, 'R'),   // Dif en negro (sin color de semáforo)
+    pct: (sign, bold, fl, b) => reg(166, signFont(sign, bold), fl, b, 'R'),
+    blank: (bold, fl, b) => reg(0, bold ? F.boldInk : F.base, fl, b, 'R'),
+    xml: () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="${numFmts.length}">${numFmts.join('')}</numFmts><fonts count="${fonts.length}">${fonts.join('')}</fonts><fills count="${fills.length}">${fills.join('')}</fills><borders count="${borders.length}">${borders.join('')}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
+  };
+}
+
+/* ---------- Generador .xlsx CON estilos (matriz de celdas {v,t,s}) ----------
+   Igual que _xlsx pero: cada celda puede llevar `s` (índice de estilo), acepta una
+   matriz completa (encabezado incluido), incrusta xl/styles.xml, fija anchos de
+   columna, congela paneles y permite alto de fila. Sin librerías externas. */
+function _xlsxStyled(sheetName, matrix, opts) {
+  opts = opts || {};
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const cell = (c, ref) => {
+    const s = (c && c.s != null) ? ` s="${c.s}"` : '';
+    // Celda de texto enriquecido: varios "runs" con color propio (p. ej. ● de semáforo + %).
+    if (c && c.rich) {
+      const runs = c.rich.map(r => `<r><rPr>${r.bold ? '<b/>' : ''}<sz val="11"/><color rgb="${r.color}"/><rFont val="Calibri"/><family val="2"/></rPr><t xml:space="preserve">${esc(r.t)}</t></r>`).join('');
+      return `<c r="${ref}"${s} t="inlineStr"><is>${runs}</is></c>`;
+    }
+    if (c && c.t === 'n' && c.v != null && isFinite(c.v)) return `<c r="${ref}"${s} t="n"><v>${c.v}</v></c>`;
+    const v = c == null ? '' : (typeof c === 'object' ? (c.v != null ? c.v : '') : c);
+    if (v === '' || v == null) return `<c r="${ref}"${s}/>`;
+    return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+  };
+  const heights = opts.rowHeights || {};
+  const body = matrix.map((cells, ri) => {
+    const ht = heights[ri];
+    return `<row r="${ri + 1}"${ht ? ` ht="${ht}" customHeight="1"` : ''}>${cells.map((c, ci) => cell(c, _colName(ci) + (ri + 1))).join('')}</row>`;
+  }).join('');
+  const colsXml = (opts.cols && opts.cols.length)
+    ? `<cols>${opts.cols.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
+  const fz = opts.freeze;
+  const views = fz
+    ? `<sheetViews><sheetView workbookViewId="0"><pane xSplit="${fz.x || 0}" ySplit="${fz.y || 0}" topLeftCell="${fz.cell}" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="${fz.cell}" sqref="${fz.cell}"/></sheetView></sheetViews>`
+    : '';
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${views}${colsXml}<sheetData>${body}</sheetData></worksheet>`;
+  const wb = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${esc(sheetName)}" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const wbr = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const e = new TextEncoder();
+  const parts = [
+    { name: '[Content_Types].xml', data: e.encode(ct) },
+    { name: '_rels/.rels', data: e.encode(rels) },
+    { name: 'xl/workbook.xml', data: e.encode(wb) },
+    { name: 'xl/_rels/workbook.xml.rels', data: e.encode(wbr) },
+    { name: 'xl/worksheets/sheet1.xml', data: e.encode(sheet) },
+    { name: 'xl/styles.xml', data: e.encode(opts.stylesXml || '') },
+  ];
+  return _zipStore(parts);
+}
+
 /* ---------- Pestaña Diccionario: CECO→Gerencia/VP (editable) y catálogo de Ítem ---------- */
 function DictView(props) {
   const A = window.CORP;
@@ -339,7 +455,7 @@ const RESUMEN_COL_CATALOG = [
   // ── Forecast ──
   { key: 'fcst26', kind: 'fcst', cat: 'Forecast', label: 'Forecast 5+7 2026' },
 ];
-const RESUMEN_DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', claco: 'Desc. CLACO', ceco: 'CECO', contra: 'Contrapartida' };
+const RESUMEN_DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', claco: 'Desc. CLACO', clacocod: 'CLACO', ceco: 'CECO', contra: 'Contrapartida' };
 // Estructuras de la Tabla Resumen. El Ítem Relevante (Agrupación3) va como padre del
 // Ítem (Agrupación4). Las que terminan en CECO/Contrapartida = detalle máximo.
 // Selección por defecto de Clasificación Cuenta: TODAS menos "Mano de Obra".
@@ -353,11 +469,12 @@ const RESUMEN_DIMS = {
   orgcc:  ['vp', 'ger', 'itemrel', 'item', 'dceco', 'ceco', 'contra'],
 };
 
-function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode, onCecoMode, st, set }) {
+function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode, onCecoMode, st, set, thr }) {
   const A = window.CORP;
   valMode = valMode || 'n'; cecoMode = cecoMode || 'new';
   onValMode = onValMode || (() => {}); onCecoMode = onCecoMode || (() => {});
   onDec = onDec || (() => {});
+  thr = thr || { red: 3, yellow: 1 };   // umbrales del semáforo (Excel: punto rojo/ámbar/verde en % Dif)
   st = st || {}; set = set || (() => {});
   // Filtros COMPARTIDOS con la pestaña "Gastos Corporativos": viven en el estado del App
   // (no se reinician al cambiar de pestaña) y se mantienen sincronizados entre ambas vistas.
@@ -388,8 +505,8 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   // Estructura por defecto (pedida): VP › Desc. CECO › CECO › Ítem Relevante › Ítem › Desc. CLACO
   // (Gerencia y Contrapartida quedan disponibles como chips "+"). Es un orden custom (no coincide
   // con un preset), así que arranca fijado en dimOrder; el selector de Estructura lo resetea.
-  const [dimOrder, setDimOrder] = React.useState(['vp', 'ger', 'dceco', 'ceco', 'itemrel', 'item', 'claco', 'contra']);
-  const [hiddenDims, setHiddenDims] = React.useState(() => new Set(['ger', 'contra'])); // niveles excluidos (× ) — Gerencia y Contrapartida ocultos por defecto (se agregan con "+")
+  const [dimOrder, setDimOrder] = React.useState(['vp', 'ger', 'dceco', 'ceco', 'itemrel', 'item', 'claco', 'clacocod', 'contra']);
+  const [hiddenDims, setHiddenDims] = React.useState(() => new Set(['ger', 'contra', 'clacocod'])); // niveles excluidos (× ) — Gerencia, Contrapartida y CLACO (código) ocultos por defecto (se agregan con "+")
   const [dragDim, setDragDim] = React.useState(null);        // nivel que se está arrastrando
   const [detOrder, setDetOrder] = React.useState('td');      // detalle: 'td' Texto pedido›Denominación · 'dt' al revés
   const [showDetP, setShowDetP] = React.useState(true);      // mostrar el detalle Ppto/Fcst (Concepto Gasto › Actividad)
@@ -398,6 +515,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const [selCols, setSelCols] = React.useState(['pfy26', 'fcst26']); // columnas a comparar (NO incluyen la base): Ppto 2026 FY + Forecast 5+7 2026
   const [baseKey, setBaseKey] = React.useState('prop'); // columna base (fija, va primero) para Dif/% Dif = Ppto 2027
   const [showDif, setShowDif] = React.useState(true);   // Mostrar Dif / % Dif marcado por defecto
+  const [viewUnit, setViewUnit] = React.useState(unit || 'MUSD');   // unidad de ESTA vista (pantalla + descarga Excel): MUSD/kUSD/USD
   const [colsOpen, setColsOpen] = React.useState(false);
   const [expanded, setExpanded] = React.useState(() => new Set());
   const [collapsed, setCollapsed] = React.useState(() => new Set()); // ramas cerradas a mano durante la búsqueda
@@ -476,8 +594,12 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   // "Ítem" (su padre natural) si no está ya, y arranca oculto (ver hiddenDims) → aparece como
   // chip "+ Desc. CLACO" para agregarlo. Solo aquí (Tabla Resumen), no toca los presets compartidos.
   const _rawBase = dimOrder || RESUMEN_DIMS[groupMode] || RESUMEN_DIMS.item;
-  const _baseDims = _rawBase.includes('claco') ? _rawBase
+  // «Desc. CLACO» (descripción) y «CLACO» (código) son niveles OPCIONALES: si el preset no los trae,
+  // se inyectan tras «Ítem» / «Desc. CLACO» para quedar SIEMPRE disponibles (arrancan como chips "+").
+  const _withClaco = _rawBase.includes('claco') ? _rawBase.slice()
     : (() => { const ii = _rawBase.indexOf('item'); const b = _rawBase.slice(); b.splice(ii < 0 ? b.length : ii + 1, 0, 'claco'); return b; })();
+  const _baseDims = _withClaco.includes('clacocod') ? _withClaco
+    : (() => { const ci = _withClaco.indexOf('claco'); const b = _withClaco.slice(); b.splice(ci < 0 ? b.length : ci + 1, 0, 'clacocod'); return b; })();
   const _structDims = _baseDims.filter(d => showCeco || (d !== 'ceco' && d !== 'dceco'));
   const dims = _structDims.filter(d => !hiddenDims.has(d));   // niveles activos (excluye los quitados con ×)
   const ghostDims = _structDims.filter(d => hiddenDims.has(d)); // quitados → se muestran como chips para re-agregar
@@ -715,7 +837,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const cap = { fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 9.5, letterSpacing: '.07em', color: '#8a9499', textTransform: 'uppercase', marginBottom: 4 };
   const fctlSel = { height: 34, padding: '0 10px', border: '1px solid #cdd6d8', borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-sans)', color: 'var(--ink)', cursor: 'pointer', background: '#fff', width: '100%', maxWidth: 200, boxSizing: 'border-box' };
   const valHdr = isBase => ({ background: isBase ? '#717981' : 'var(--amsa-yellow)', color: isBase ? '#fff' : '#3a2e10' });
-  const num = (v, k, extra) => <td key={k} className="tnum" style={{ textAlign: 'right', ...extra }}>{A.fmt(v, unit, dec)}</td>;
+  const num = (v, k, extra) => <td key={k} className="tnum" style={{ textAlign: 'right', ...extra }}>{A.fmt(v, viewUnit, dec)}</td>;
   // Familia de cada columna: Real vs Ppto/Forecast. Sirve para atenuar las que no aplican al grano.
   const colFam = c => (c.kind === 'real' ? 'real' : 'ppto');
   const HATCH = 'repeating-linear-gradient(-45deg,transparent,transparent 5px,rgba(20,81,90,.05) 5px,rgba(20,81,90,.05) 6px)';
@@ -736,12 +858,114 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           const v = valOf(c, node);
           const dif = baseVal - v;
           const pct = v ? dif / Math.abs(v) : null;   // % Dif = Dif / período (desviación de la base vs ese período)
-          out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, unit, dec)}</td>);
+          out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, viewUnit, dec)}</td>);
           out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 1)}</td>);
         }
       }
     });
     return out;
+  };
+
+  // Descargar la tabla TAL CUAL como Excel (.xlsx nativo, sin librerías): respeta las filas
+  // visibles (expandido/colapsado + búsqueda), las columnas activas (base + comparar), Dif/% Dif
+  // si están activos, y los decimales actuales. La UNIDAD es la misma del selector en pantalla
+  // (viewUnit: MM USD / kUSD / USD). Los valores van como NÚMERO (no texto).
+  const exportarExcel = () => {
+    const div = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;
+    const f = Math.pow(10, dec);
+    const numCell = raw => ({ t: 'n', v: Math.round((raw / div) * f) / f });
+    const DISPF = { vp: A.dispVP, ger: A.dispGer, dceco: n => n, ceco: n => n, itemrel: A.dispItemRel, item: A.dispItem, claco: A.dispClaco, clacocod: n => n, contra: n => n };
+    const sty = _buildSheetStyles(dec);
+    const Fnone = sty.FILL.none, Ftot = sty.FILL.total, Flvl1 = sty.FILL.lvl1;
+    const Bgrid = sty.BORD.grid, Btot = sty.BORD.total;
+    // Metadatos por columna del área de valores (mismo orden que valueCells) para elegir
+    // formato numérico (valor / Dif / % Dif) y color del encabezado.
+    const colMeta = [];
+    cols.forEach(c => {
+      const isBase = baseCol && c.key === baseCol.key;
+      colMeta.push({ type: 'val' });
+      if (baseCol && !isBase && showDif) { colMeta.push({ type: 'dif' }); colMeta.push({ type: 'pct' }); }
+    });
+    // Encabezados coloreados: estructura en teal, base en gris, ppto/real en amarillo,
+    // Dif/% Dif en teal oscuro (idéntico a la cabecera de la tabla en pantalla).
+    const headerRow = [
+      { v: headerLbl || 'Estructura', s: sty.hdrStruct },
+    ];
+    cols.forEach(c => {
+      const isBase = baseCol && c.key === baseCol.key;
+      headerRow.push({ v: c.label + (isBase ? ' (base)' : ''), s: isBase ? sty.hdrBase : sty.hdrPpto });
+      if (baseCol && !isBase && showDif) {
+        headerRow.push({ v: 'Dif', s: sty.hdrDif });
+        headerRow.push({ v: '% Dif', s: sty.hdrDif });
+      }
+    });
+    // Celdas de valor para un nodo (misma lógica que rowCells; "—" del panel → celda vacía).
+    const valueCells = (node, fam) => {
+      const baseOff = !!(fam && baseCol && colFam(baseCol) !== fam);
+      const baseVal = baseCol ? valOf(baseCol, node) : 0;
+      const out = [];
+      cols.forEach(c => {
+        const isBase = baseCol && c.key === baseCol.key;
+        const off = !!(fam && colFam(c) !== fam);
+        out.push(off ? '' : numCell(valOf(c, node)));
+        if (baseCol && !isBase && showDif) {
+          if (off || baseOff) { out.push(''); out.push(''); }
+          else {
+            const v = valOf(c, node);
+            const dif = baseVal - v;
+            const pct = v ? dif / Math.abs(v) : null;   // ratio; se exporta como %-puntos (×100)
+            out.push(numCell(dif));
+            out.push(pct == null ? '' : { t: 'n', v: Math.round(pct * 1000) / 10 });
+          }
+        }
+      });
+      return out;
+    };
+    // Aplica estilo a las celdas de valor de una fila. Valores y Dif: número en negro. % Dif:
+    // punto de semáforo (● rojo/ámbar/verde) + el porcentaje en la MISMA celda (texto), igual
+    // que la imagen de referencia. Semáforo = misma regla del panel (kpiColor): verde si está a/bajo
+    // la base, rojo si la supera por más del umbral rojo, ámbar en el medio.
+    const INK = 'FF1F2428';
+    const semHex = v => (v > thr.red ? 'FFDC3545' : v <= 0 ? 'FF1F9D57' : 'FFE0A800');
+    const styleValueRow = (raw, bold, fill, bord) => raw.map((rc, i) => {
+      const m = colMeta[i];
+      if (rc === '' || rc == null || rc.v == null || !isFinite(rc.v)) return { v: '', s: sty.blank(bold, fill, bord) };
+      if (m.type === 'val') return { t: 'n', v: rc.v, s: sty.num(bold, fill, bord) };
+      if (m.type === 'dif') return { t: 'n', v: rc.v, s: sty.difPlain(bold, fill, bord) };   // Dif: número en negro
+      // % Dif: ● de semáforo + porcentaje juntos (celda de texto). rc.v = pct × 100 (1 decimal).
+      const v = rc.v;
+      const txt = (v > 0 ? '+' : '') + A.fmtPct(v / 100, 1);
+      return { rich: [{ t: '●', color: semHex(v), bold }, { t: ' ' + txt, color: INK, bold }], s: sty.blank(bold, fill, bord) };
+    });
+    const matrix = [headerRow];
+    flat.forEach(row => {
+      const dim = row.dim || dims[row.level - 1];
+      const nm = (DISPF[dim] || (x => x))(row.node.name);
+      const isL1 = (row.level || 1) === 1;   // fila de primer nivel (VP): en negrita y resaltada
+      const bold = isL1, fill = isL1 ? Flvl1 : Fnone;
+      const indent = '    '.repeat(Math.max(0, (row.level || 1) - 1));   // jerarquía visible por sangría
+      matrix.push([
+        { v: indent + nm, s: sty.name(bold, fill, Bgrid) },
+        ...styleValueRow(valueCells(row.node, row.fam), bold, fill, Bgrid),
+      ]);
+    });
+    matrix.push([
+      { v: 'Total', s: sty.name(true, Ftot, Btot) },
+      ...styleValueRow(valueCells({ agg: totalAgg }, undefined), true, Ftot, Btot),
+    ]);
+    // Anchos de columna: estructura ancha, valores/Dif/% Dif ajustados.
+    const widths = [42];
+    colMeta.forEach(m => widths.push(m.type === 'val' ? 14 : m.type === 'dif' ? 12 : 11));
+    const unitLbl = viewUnit === 'kUSD' ? 'kUSD' : viewUnit === 'USD' ? 'USD' : 'MM USD';
+    const url = URL.createObjectURL(_xlsxStyled(('Comparación ' + unitLbl).slice(0, 31), matrix, {
+      stylesXml: sty.xml(),
+      cols: widths,
+      freeze: { x: 1, y: 1, cell: 'B2' },   // congela la columna de estructura y la fila de encabezados
+      rowHeights: { 0: 30 },
+    }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `Comparacion por periodo (${unitLbl}).xlsx`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 
   // Filtros que pueden colapsar al "+" cuando no caben (de derecha a izquierda).
@@ -809,7 +1033,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, margin: '4px 0 12px' }}>
         <div>
           <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>Tabla Resumen</h2>
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Comparador por período · {headerLbl} · {unit}</div>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Comparador por período · {headerLbl} · {viewUnit === 'MUSD' ? 'MM USD' : viewUnit}</div>
         </div>
       </div>
 
@@ -971,6 +1195,16 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600, cursor: 'pointer' }}>
               <input type="checkbox" checked={showDif} onChange={e => setShowDif(e.target.checked)} /> Mostrar Dif / % Dif
             </label>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600 }}
+              title="Unidad de la tabla en pantalla y del Excel descargado.">
+              Unidad
+              <select value={viewUnit} onChange={e => setViewUnit(e.target.value)}
+                style={{ height: 26, padding: '0 8px', border: '1px solid var(--teal-200)', borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-sans)', color: 'var(--ink)', cursor: 'pointer', background: '#fff' }}>
+                <option value="MUSD">MM USD (millones)</option>
+                <option value="kUSD">kUSD (miles)</option>
+                <option value="USD">USD</option>
+              </select>
+            </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--fg-3)', fontWeight: 600 }}>
               Decimales
               <span style={{ display: 'inline-flex', alignItems: 'stretch', height: 26, border: '1px solid var(--teal-200)', borderRadius: 6, overflow: 'hidden', background: '#fff' }}>
@@ -988,6 +1222,11 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
               title={expanded.size ? 'Colapsar todas las filas' : 'Expandir todas las filas'}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--teal-wash)', color: 'var(--amsa-teal)', border: '1px solid var(--amsa-teal-light)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
               {expanded.size ? '⤒ Colapsar todo' : '⤓ Expandir todo'}
+            </button>
+            <button type="button" onClick={exportarExcel}
+              title="Descargar la tabla tal cual como Excel (.xlsx): filas visibles, columnas activas, decimales y unidad actuales"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--amsa-teal)', color: '#fff', border: '1px solid var(--amsa-teal)', borderRadius: 7, padding: '6px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              ⭳ Descargar Excel
             </button>
           </div>
         </div>
@@ -1117,10 +1356,6 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
               </tbody>
             </table>
           )}
-        </div>
-        <div className="note" style={{ padding: '8px 14px 12px' }}>
-          Elige Datos, filtros (VP / Gerencia / Ítem), estructura y los períodos a comparar. La 1ª columna es la base; «Dif» = base − período, «% Dif» = Dif / período (desviación de la base respecto de ese período). Clic en un encabezado para ordenar (menor→mayor; otra vez, mayor→menor). Arrastra un encabezado de período para reordenar las columnas. Clic en un VP / Gerencia / Ítem filtra el panel por ese elemento (clic de nuevo para quitar); CECO / Contrapartida filtran vía el buscador.
-          Valor: elige «Normal» o «Moneda Ajustada 2027» en la barra de filtros. Ppto 2027 = Presupuesto 2027 cargado del Excel.
         </div>
       </div>
     </div>
@@ -1819,7 +2054,7 @@ function App() {
         </div>
         {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} cecoNames={cecoNames} setCecoNames={setCecoNames} cecoMode={cecoMode} onCecoMode={onCecoMode} />
          : page === 'dotaciones' ? <DotacionesView />
-         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} onDec={v => setTweak('decimals', v)} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} st={st} set={set} />
+         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} onDec={v => setTweak('decimals', v)} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} st={st} set={set} thr={thr} />
          : <React.Fragment>
         <FilterBar st={st} set={set} gerOptions={dims.gers} itemrelOptions={dims.itemrels} cecoOptions={dims.cecos} clacoOptions={dims.clacos} tcOptions={dims.tcs} clasOptions={dims.clases} apOptions={dims.aps}
           valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} />
