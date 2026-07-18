@@ -24,7 +24,7 @@ function MultiSelect({ options, selected, onChange, placeholder, gold, searchabl
     if (impliedAll && impliedAll.length && n.size === impliedAll.length && impliedAll.every(x => n.has(x))) onChange([]);
     else onChange([...n]);
   };
-  const filtered = options.filter(o => o.label.toLowerCase().includes(q.toLowerCase()));
+  const filtered = options.filter(o => String(o.label == null ? '' : o.label).toLowerCase().includes(q.toLowerCase()));
   let label = placeholder;
   if (selected.length === 1) label = options.find(o => o.value === selected[0])?.label || placeholder;
   else if (selected.length > 1) label = `${selected.length} seleccionadas`;

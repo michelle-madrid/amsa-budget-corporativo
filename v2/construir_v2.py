@@ -87,6 +87,9 @@ FC_CECO, FC_CLACO, FC_VALN, FC_VALA = 2, 4, 15, 16
 FC_CG, FC_ACT = 8, 9   # Forecast: Concepto Gasto (col8) · Actividad (col9)
 PPTO27_FILE = os.path.join(UP, "PPTO27_15_07_2026_15_30.XLSX")
 PPTO27_SHEET = "Sheet1"
+# CAPEX 2027 (hoja "BD AMSA"): base para la pestaña CAPEX. Header en 2 filas, datos desde la 3.
+CAPEX_FILE = os.path.join(UP, "capex", "Presupuesto CAPEX AMSA 2027 v2.xlsx")
+CAPEX_SHEET = "BD AMSA"
 # Ppto 2027 (hoja ancha): CECO=2 · Clase Costo(CLACO)=4 · Total-2027=26 (USD, ya en moneda 2027).
 P27_CECO, P27_CLACO, P27_TOTAL = 2, 4, 26
 P27_CG, P27_ACT = 8, 9   # Ppto 2027: Concepto Gasto (col8) · Actividad (col9)
@@ -945,7 +948,67 @@ def embeber(data_js, write=True):
     return html
 
 
-def construir_v3(base_html, data_js, det, detp=None):
+def leer_capex():
+    """Lee la hoja 'BD AMSA' del Excel de CAPEX 2027 → estructura para la pestaña CAPEX.
+    Columnas (0-idx, header en fila 2): 1 Compañía · 2 Código PEP · 3 Nombre Proyecto ·
+    4 Nuevo/Remanente · 5 Sustaining/Development · 6 Estatus · 9 Gerencia Ejecutora ·
+    11 Vicepresidencia · 27..38 $ Ene-27..$ Dic-27 · 39 Total 2027 (montos en USD)."""
+    if not os.path.isfile(CAPEX_FILE):
+        log(f"  AVISO: no existe {CAPEX_FILE}; se omite CAPEX.")
+        return None
+    log("Leyendo CAPEX…")
+    wb = openpyxl.load_workbook(CAPEX_FILE, data_only=True, read_only=True)
+    if CAPEX_SHEET not in wb.sheetnames:
+        log(f"  AVISO: la hoja '{CAPEX_SHEET}' no está en {CAPEX_FILE}; se omite CAPEX.")
+        return None
+    ws = wb[CAPEX_SHEET]
+    MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+    def _num(v):
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    def _txt(v, default="(vacío)"):
+        s = str(v).strip() if v is not None else ""
+        return s if s else default
+    def _nr(v):
+        s = (str(v).strip() if v is not None else "").lower()
+        if s.startswith("nuevo"):     return "Nuevo"
+        if s.startswith("remanente"): return "Remanente"
+        return "(sin clasificar)"
+    def _est(v):
+        s = (str(v).strip() if v is not None else "").lower()
+        if s == "aprobado":    return "Aprobado"
+        if s == "no aprobado": return "No aprobado"
+        return "Sin estado"
+    rows = []
+    for r in ws.iter_rows(min_row=3, values_only=True):
+        if r is None or len(r) < 40:
+            continue
+        proj = r[3]
+        if proj is None or str(proj).strip() == "":
+            continue
+        months = [round(_num(r[27 + i]), 2) for i in range(12)]
+        tot = round(_num(r[39]), 2)
+        if tot == 0:
+            tot = round(sum(months), 2)
+        rows.append({
+            "sd":   _txt(r[5], "(sin categoría)"),   # Sostenimiento / Desarrollo (Sustaining/Development/TMM)
+            "vp":   _txt(r[11]),                       # Vicepresidencia
+            "ger":  _txt(r[9]),                        # Gerencia Ejecutora
+            "nr":   _nr(r[4]),                         # Nuevo / Remanente
+            "proj": str(proj).strip(),                 # Nombre de Proyecto
+            "pep":  _txt(r[2], ""),                    # Código PEP
+            "comp": _txt(r[1], "AMSA"),                # Compañía
+            "est":  _est(r[6]),                        # Estatus
+            "m":    months,                            # $ Ene-27 .. $ Dic-27 (USD)
+            "tot":  tot,                               # Total 2027 (USD)
+        })
+    log(f"  CAPEX: {len(rows)} proyectos · Total 2027 {sum(x['tot'] for x in rows)/1e6:.1f} MM USD")
+    return {"months": MESES, "rows": rows}
+
+
+def construir_v3(base_html, data_js, det, detp=None, capex=None):
     """v3 = el HTML v2 ya embebido (base_html, que trae el código+data nuevos), pero con el
     DETALLE del gasto añadido a la data:
     · window.DET  = detalle Real (Contrapartida › Texto pedido › Denominación).
@@ -960,6 +1023,8 @@ def construir_v3(base_html, data_js, det, detp=None):
     det_js = "window.DET=" + json.dumps(det, ensure_ascii=False, separators=(",", ":")) + ";"
     if detp is not None:
         det_js += "\nwindow.DETP=" + json.dumps(detp, ensure_ascii=False, separators=(",", ":")) + ";"
+    if capex is not None:
+        det_js += "\nwindow.CAPEX_DATA=" + json.dumps(capex, ensure_ascii=False, separators=(",", ":")) + ";"
     html = _set_asset(html, DATA_UUID, data_js + "\n" + det_js)
     # Título propio para distinguir la versión con detalle.
     html = html.replace("<title>Actividad Corporativa + Distribuibles · AMSA</title>",
@@ -1200,7 +1265,8 @@ def main(solo_v3=False):
     log("Construyendo detalle v3…")
     det = leer_detalle(name2item, _en_alcance, st_names)
     detp = leer_detalle_pf(code2item, _en_alcance)
-    construir_v3(base_html, data_js, det, detp)
+    capex = leer_capex()
+    construir_v3(base_html, data_js, det, detp, capex)
 
     # BBDD completa (parquet, esquema estrella): toda la data del dashboard en tablas unibles.
     # Se escribe SIEMPRE (también en --solo-v3): no es un deliverable, refleja la data vigente.

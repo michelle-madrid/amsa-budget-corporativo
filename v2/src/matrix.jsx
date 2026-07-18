@@ -14,7 +14,7 @@ const DET_DIMS = ['texto', 'denom'];   // niveles de detalle (v3) que cuelgan de
 
 // Aplana el árbol a filas visibles. Soporta N niveles (VP › Gerencia › Ítem › CECO…),
 // respetando el set de expandidos. type = por PROFUNDIDAD (para el estilo por nivel).
-function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMode, detP, sortCmp) {
+function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMode, detP, sortCmp, catNodes, realCol) {
   const A = window.CORP;
   const D = dims.map(d => A[DISP_BY[d]] || (x => x));
   const ql = (q || '').trim().toLowerCase();
@@ -75,6 +75,35 @@ function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMod
       if (expandable && open) walkDetailP(n.children, depth + 1, key);
     });
   }
+  // Contrapartidas (nivel Real) bajo el nodo «Real»: se toman del ÁRBOL (n.children del ancla), por lo
+  // que SUS VALORES CUADRAN con el total real del padre. Bajo cada Contrapartida cuelga Texto pedido ›
+  // Denominación (window.DET). El nodo «Real» las agrupa; nace colapsado y aparece si hay columna Real.
+  function walkContra(nodes, ctx, depth, prefix, force) {
+    if (rows.length >= MAX_ROWS) return;
+    if (sortCmp) nodes = nodes.slice().sort(sortCmp);
+    nodes.forEach(n => {
+      if (rows.length >= MAX_ROWS) return;
+      if (n.name === '(Presupuesto)' || n.name === '(Forecast)' || n.name === '(Ppto2027)') return;   // el Ppto/Fcst no tiene contrapartida
+      const self = ql ? String(n.name).toLowerCase().includes(ql) : true;
+      const ctxC = Object.assign({}, ctx, { contra: n.name });
+      if (ql && !force && !self && !(A.detailMatch && A.detailMatch(ctxC, ql, stMode))) return;
+      const key = prefix + '|C|' + n.name;
+      const hasDet = !!(A.hasDetailFor && A.hasDetailFor(ctxC, stMode));
+      const open = (collapsed && collapsed.has(key)) ? false : (ql ? true : expanded.has(key));
+      rows.push({ type: clsFor(depth), key, node: n, level: depth + 1, expandable: hasDet, dim: 'contra', open, fam: 'real' });
+      if (hasDet && open) walkDetail(A.detailNodes(ctxC, years, (force || self) ? null : ql, detOrder, stMode), depth + 1, key);
+    });
+  }
+  // Nodo-CATEGORÍA (Real / Ppto·Forecast) que agrupa el detalle bajo el último nivel de la
+  // estructura: nace COLAPSADO (clic para abrir; el detalle cuelga recién al abrirlo). Su valor
+  // reutiliza el agg del nodo padre, enmascarado por familia (columnas de la otra familia → «—»).
+  function pushCat(fam, node, parentKey, depth, emit) {
+    if (rows.length >= MAX_ROWS) return;
+    const catKey = parentKey + (fam === 'real' ? '|@R' : '|@P');
+    const open = (collapsed && collapsed.has(catKey)) ? false : (ql ? true : expanded.has(catKey));
+    rows.push({ type: clsFor(depth), key: catKey, node: node, level: depth + 1, expandable: true, cat: fam, fam: fam, open });
+    if (open) emit(catKey, depth + 1);
+  }
   // force = un ancestro coincidió por nombre → mostrar TODO su subárbol.
   function walk(nodes, depth, prefix, ctx, force) {
     if (rows.length >= MAX_ROWS) return;
@@ -88,9 +117,13 @@ function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMod
       if (ql && !force && !self && !subtreeMatch(n, depth, ctx)) return;
       const key = prefix ? prefix + '|' + n.name : n.name;
       const ctx2 = Object.assign({}, ctx); ctx2[dim] = n.name;
-      const detHere = useDet && dim === 'contra' && depth === dims.length - 1;   // detalle Real solo si Contrapartida es el último nivel
+      const detHere = useDet && dim === 'contra' && depth === dims.length - 1;   // detalle Real (texto/denom) bajo Contrapartida cuando ES el último nivel (Gastos Corporativos)
       const detPHere = useDetP && depth === ppAnchor;                            // detalle Ppto/Fcst cuelga del nivel más profundo entre Ítem y CECO
       const hasKids = !!(n.children && n.children.length);
+      // «Real» (Tabla Resumen): las Contrapartidas del ÁRBOL (hijas de este nodo) se AGRUPAN bajo un
+      // nodo «Real» cuando el siguiente nivel es Contrapartida y hay columna Real. Reutiliza los nodos
+      // del árbol → sus valores CUADRAN con el total real del padre. Simétrico con «Ppto / Forecast».
+      const realHere = catNodes && realCol && dims[depth + 1] === 'contra' && hasKids;
       const expandable = detHere ? A.hasDetailFor(ctx2, stMode) : (hasKids || (detPHere && A.hasDetailPFor(ctx2)));
       const childForce = force || self;
       // Colapsar manual GANA sobre el auto-abrir de la búsqueda (permite esconder ramas al buscar).
@@ -100,9 +133,18 @@ function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMod
         if (detHere) {
           walkDetail(A.detailNodes(ctx2, years, childForce ? null : ql, detOrder, stMode), depth + 1, key);
         } else {
-          if (hasKids) walk(n.children, depth + 1, key, ctx2, childForce);
-          // Bajo el Ítem: además de las Contrapartidas (Real), cuelga Concepto Gasto › Actividad (Ppto/Fcst).
-          if (detPHere && A.hasDetailPFor(ctx2)) walkDetailP(A.detailNodesP(ctx2, childForce ? null : ql), depth + 1, key);
+          if (realHere) {
+            // Envolver las Contrapartidas (hijas del árbol) bajo el nodo «Real»; el detalle texto/denom cuelga de cada una.
+            const emitReal = (pfx, dpt) => walkContra(n.children, ctx2, dpt, pfx, childForce);
+            pushCat('real', n, key, depth + 1, emitReal);
+          } else if (hasKids) {
+            walk(n.children, depth + 1, key, ctx2, childForce);
+          }
+          // «Ppto / Forecast»: Concepto Gasto › Actividad.
+          if (detPHere && A.hasDetailPFor(ctx2)) {
+            const emitP = (pfx, dpt) => walkDetailP(A.detailNodesP(ctx2, childForce ? null : ql), dpt, pfx);
+            if (catNodes) pushCat('ppto', n, key, depth + 1, emitP); else emitP(key, depth + 1);
+          }
         }
       }
     });
@@ -124,6 +166,19 @@ function Twig({ row, expanded, onToggle, dims, onPick, active, onHide }) {
              : null;
   const showCode = code && String(code) !== String(name);
   const isOpen = row.open != null ? row.open : expanded.has(row.key);
+  // Nodo-categoría (Real / Ppto·Forecast): agrupa el detalle bajo el último nivel. Sin código ni acciones.
+  if (row.cat) {
+    const catLbl = row.cat === 'real' ? 'Real' : 'Ppto / Forecast';
+    return (
+      <span className={'twig ind-' + row.level}>
+        {row.expandable
+          ? <button className="tog" onClick={() => onToggle(row.key)}>{isOpen ? '–' : '+'}</button>
+          : <span className="tog empty"></span>}
+        <span style={{ fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 10.5, letterSpacing: '.05em', textTransform: 'uppercase',
+          color: row.cat === 'real' ? 'var(--amsa-teal)' : 'var(--accent-ink)' }}>{catLbl}</span>
+      </span>
+    );
+  }
   return (
     <span className={'twig ind-' + row.level}>
       {row.expandable
