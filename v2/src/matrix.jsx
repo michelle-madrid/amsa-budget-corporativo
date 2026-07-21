@@ -83,7 +83,7 @@ function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMod
     if (sortCmp) nodes = nodes.slice().sort(sortCmp);
     nodes.forEach(n => {
       if (rows.length >= MAX_ROWS) return;
-      if (n.name === '(Presupuesto)' || n.name === '(Forecast)' || n.name === '(Ppto2027)') return;   // el Ppto/Fcst no tiene contrapartida
+      if (n.name === '(Presupuesto)' || n.name === '(Forecast)' || n.name === '(Outlook)' || n.name === '(Ppto2027)') return;   // el Ppto/Fcst no tiene contrapartida
       const self = ql ? String(n.name).toLowerCase().includes(ql) : true;
       const ctxC = Object.assign({}, ctx, { contra: n.name });
       if (ql && !force && !self && !(A.detailMatch && A.detailMatch(ctxC, ql, stMode))) return;
@@ -112,7 +112,7 @@ function flattenTree(tree, expanded, q, dims, detail, detOrder, collapsed, stMod
       const dim = dims[depth];
       // El Ppto/Forecast no tienen contrapartida: no mostramos esos nodos a nivel
       // Contrapartida (confunde). El monto igual cuenta en el nivel padre.
-      if (dim === 'contra' && (n.name === '(Presupuesto)' || n.name === '(Forecast)' || n.name === '(Ppto2027)')) return;
+      if (dim === 'contra' && (n.name === '(Presupuesto)' || n.name === '(Forecast)' || n.name === '(Outlook)' || n.name === '(Ppto2027)')) return;
       const self = ql ? nameHit(n, depth) : true;
       if (ql && !force && !self && !subtreeMatch(n, depth, ctx)) return;
       const key = prefix ? prefix + '|' + n.name : n.name;

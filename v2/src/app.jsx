@@ -282,7 +282,7 @@ function DictView(props) {
             <select value={cecoMode} onChange={e => onCecoMode(e.target.value)}
               style={{ height: 32, border: '1px solid var(--teal-border)', borderRadius: 6, fontSize: 12.5, padding: '0 8px', color: 'var(--ink)', background: '#fff', fontFamily: 'var(--font-sans)', outline: 'none' }}>
               <option value="new">Nuevos</option>
-              <option value="old">Antiguos</option>
+              <option value="old">Antiguos</option><option value="ajustes">Nueva con ajustes</option>
             </select>
           </label>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar CECO, Gerencia, VP o Ítem…"
@@ -452,8 +452,9 @@ const RESUMEN_COL_CATALOG = [
   { key: 'p2024', kind: 'plan', y: 2024, cat: 'Ppto', label: 'Ppto 2024' },
   { key: 'p2023', kind: 'plan', y: 2023, cat: 'Ppto', label: 'Ppto 2023' },
   { key: 'p2022', kind: 'plan', y: 2022, cat: 'Ppto', label: 'Ppto 2022' },
-  // ── Forecast ──
+  // ── Forecast ── (ejercicios anuales 2026; se comportan igual, cada uno con su medida)
   { key: 'fcst26', kind: 'fcst', cat: 'Forecast', label: 'Forecast 5+7 2026' },
+  { key: 'out66', kind: 'out66', cat: 'Forecast', label: 'Outlook 6+6 2026' },
 ];
 const RESUMEN_DIM_LBL = { vp: 'Vicepresidencia', ger: 'Gerencia', dceco: 'Desc. CECO', itemrel: 'Ítem Relevante', item: 'Ítem', claco: 'Desc. CLACO', clacocod: 'CLACO', ceco: 'CECO', contra: 'Contrapartida' };
 // Estructuras de la Tabla Resumen. El Ítem Relevante (Agrupación3) va como padre del
@@ -469,7 +470,7 @@ const RESUMEN_DIMS = {
   orgcc:  ['vp', 'ger', 'itemrel', 'item', 'dceco', 'ceco'],
 };
 
-function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode, onCecoMode, st, set, thr }) {
+function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode, onCecoMode, hideComercial, onHideComercial, st, set, thr }) {
   const A = window.CORP;
   valMode = valMode || 'n'; cecoMode = cecoMode || 'new';
   onValMode = onValMode || (() => {}); onCecoMode = onCecoMode || (() => {});
@@ -515,9 +516,13 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const [selCols, setSelCols] = React.useState(['pfy26', 'fcst26']); // columnas a comparar (NO incluyen la base): Ppto 2026 FY + Forecast 5+7 2026
   const [baseKey, setBaseKey] = React.useState('prop'); // columna base (fija, va primero) para Dif/% Dif = Ppto 2027
   const [showDif, setShowDif] = React.useState(true);   // Mostrar Dif / % Dif marcado por defecto
+  const [hideZeros, setHideZeros] = React.useState(true);   // ocultar filas en 0 en TODAS las columnas (activado por defecto)
   const [viewUnit, setViewUnit] = React.useState(unit || 'MUSD');   // unidad de ESTA vista (pantalla + descarga Excel): MUSD/kUSD/USD
   const [colsOpen, setColsOpen] = React.useState(false);
-  const [formato, setFormato] = React.useState('comp');   // 'comp' | 'pres' — toggle Comparador/Presentación (placeholder: misma tabla)
+  const [formato, setFormato] = React.useState('comp');   // 'comp' | 'pres' — Comparador (tabla-árbol) / Presentación (resumen ejecutivo por Ítem Relevante)
+  const [ahorros, setAhorros] = React.useState({});       // Presentación: «Ahorros comprometidos» (ajuste manual, {colKey: USD})
+  const [presExpanded, setPresExpanded] = React.useState(new Set());   // Presentación (modo VP): Gerencias expandidas → Ítem Relevante
+  const [presInfoOpen, setPresInfoOpen] = React.useState(false);       // Presentación: popover «cómo se calcula la % Dif»
   const [optsOpen, setOptsOpen] = React.useState(false);  // popover "Opciones de tabla" (formato puro: unidad, decimales, Dif/%)
   const optsRef = React.useRef(null);
   const [expanded, setExpanded] = React.useState(() => new Set());
@@ -657,6 +662,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const agg = node.agg;
     if (col.kind === 'prop') return agg.prop || 0;
     if (col.kind === 'fcst') return agg.fcst || 0;   // Forecast 5+7 2026 (anual)
+    if (col.kind === 'out66') return agg.out66 || 0; // Outlook 6+6 2026 (anual)
     if (col.kind === 'planfy') return agg.fy26 || 0; // Ppto 2026 anual (FY)
     if (col.kind === 'real') return yrOf(agg, col.y).real;
     if (col.kind === 'plan') return yrOf(agg, col.y).ver;
@@ -675,7 +681,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const v = valOf(c, node);
     if (kind === 'val') return v;
     const bv = baseCol ? valOf(baseCol, node) : 0;
-    const dif = bv - v;
+    const dif = v - bv;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
     if (kind === 'dif') return dif;
     return v ? dif / Math.abs(v) : NaN;   // % Dif = Dif / período; indefinido si período=0
   };
@@ -698,14 +704,27 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
 
   // v3: detalle (Texto pedido › Denominación) bajo cada Contrapartida, con valores por año.
   const flat = window.flattenTree(tree, expanded, q, dimsEff, dimsEff.includes('contra'), detOrder, collapsed, stMode, showDetP, sortCmp, true, hasRealCol);
+  // «Ocultar filas en cero»: quita las filas cuyo nodo está en 0 en TODAS las columnas seleccionadas,
+  // junto con su subárbol (para no dejar hijos huérfanos). El Total no cambia (los ceros no suman).
+  const _isZeroRow = row => cols.length > 0 && cols.every(c => valOf(c, row.node) === 0);
+  const flatShown = !hideZeros ? flat : (() => {
+    const out = [];
+    for (let i = 0; i < flat.length; i++) {
+      const row = flat[i];
+      if (_isZeroRow(row)) { let j = i + 1; while (j < flat.length && flat[j].level > row.level) j++; i = j - 1; continue; }
+      out.push(row);
+    }
+    if (flat.truncated) out.truncated = flat.truncated;
+    return out;
+  })();
   // Total: normalmente tree.total (todo lo que pasa los filtros). Con búsqueda activa, el
   // buscador filtra filas en pantalla pero NO tree.total → el Total sumaría de más. Entonces
   // recalculamos el Total sumando los nodos de PRIMER nivel visibles (los que la búsqueda dejó).
   const _sumAggs = aggs => {
-    const t = { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, prop: 0, yr: {} };
+    const t = { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, out66: 0, prop: 0, yr: {} };
     aggs.forEach(a => {
       if (!a) return;
-      t.fy26 += a.fy26 || 0; t.fcst += a.fcst || 0; t.prop += a.prop || 0;
+      t.fy26 += a.fy26 || 0; t.fcst += a.fcst || 0; t.out66 += a.out66 || 0; t.prop += a.prop || 0;
       if (a.yr) for (const y in a.yr) { const c = t.yr[y] || (t.yr[y] = { real: 0, ver: 0 }); c.real += (a.yr[y].real || 0); c.ver += (a.yr[y].ver || 0); }
     });
     return t;
@@ -788,6 +807,32 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const keep = (clases.length ? clases : all).filter(c => c !== MDO);
     setClases(keep.length ? keep : all.filter(c => c !== MDO));
   };
+  // ===== PRESENTACIÓN (resumen ejecutivo) =====
+  // Se calcula solo en modo 'pres' (varios buildTree extra). Separa Mano de Obra en fila aparte
+  // (Subtotal la excluye, Total la incluye) y arma un 2º bloque Actividad Corporativa vs Distribuibles.
+  // El PRIMER nivel de filas depende de «Agrupar por»: Ítem (itemcc) o Gerencia (orgcc, expandible
+  // a Ítem). La Presentación va por Ítem (Agrupación4), NO por Ítem Relevante. MdO va aparte.
+  const presDims = groupMode === 'itemcc' ? ['item'] : ['ger', 'item'];
+  const presFirstLbl = groupMode === 'itemcc' ? 'Ítem' : 'Vicepresidencia';
+  const presTopDisp = groupMode === 'itemcc' ? A.dispItem : A.dispGer;   // etiqueta del primer nivel
+  const pres = React.useMemo(() => {
+    if (formato !== 'pres' || cols.length === 0) return null;
+    const _po = { years: neededYears, showProp: true, yearAgg: 'byYear', version: 'ORI', companies: [], vps, gers, itemrels, items, tcs, cecos, clacos, st: stMode, aps, hidden, overrides, growth: A.DEF_GROWTH, sort: { key: 'real', dir: 'desc' } };
+    const _bt = ex => A.buildTree({ ..._po, dataMode, companias: distOn ? companias : [], ...ex });
+    const _allClas = clasOpts.map(o => o.value);
+    const _itemClas = clases.filter(c => c !== MDO);            // clases del usuario, sin MdO (que va aparte)
+    const itT = _bt({ groupBy: presDims, clases: _itemClas });
+    return {
+      items: itT.vpNodes,                                       // filas del primer nivel (Ítem Relevante o Gerencia)
+      subtotal: itT.total,                                      // Subtotal (sin Mano de Obra)
+      mdo: hasMdO ? _bt({ groupBy: ['itemrel'], clases: [MDO] }).total : null,
+      corpGastos: _bt({ dataMode: 'corp', groupBy: ['itemrel'], clases: _itemClas }).total,
+      corpMdo: hasMdO ? _bt({ dataMode: 'corp', groupBy: ['itemrel'], clases: [MDO] }).total : null,
+      dist: _bt({ dataMode: 'dist', groupBy: ['itemrel'], clases: _allClas, companias }).total,
+    };
+    // eslint-disable-next-line
+  }, [formato, groupMode, cols.length, JSON.stringify(neededYears), dataMode, JSON.stringify(vps), JSON.stringify(gers), JSON.stringify(itemrels), JSON.stringify(items), JSON.stringify(tcs), JSON.stringify(clases), JSON.stringify(companias), JSON.stringify(cecos), JSON.stringify(clacos), stMode, JSON.stringify(aps), JSON.stringify(hidden), distOn, overrides, hideComercial]);
+
   // Filtro por código CECO: acotado a VP/Gerencia activas + los ya seleccionados (aunque queden fuera).
   const cecoOpts = [...new Set([...(dimsOpt.cecos || []), ...cecos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
   const clacoOpts = [...new Set([...(dimsOpt.clacos || []), ...clacos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));   // filtro por código CLACO (Clase de Costo)
@@ -798,7 +843,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const clacoScope = React.useMemo(() => !clacoNarrowed ? [] : A.clacosInScope({
     dataMode, companies: [], vps, gers, itemrels, items, tcs, clases,
     companias: distOn ? companias : [], cecos, st: stMode, aps, hidden,
-  }), [clacoNarrowed, dataMode, vps, gers, itemrels, items, tcs, clases, companias, distOn, cecos, stMode, aps, hidden]);
+  }), [clacoNarrowed, dataMode, vps, gers, itemrels, items, tcs, clases, companias, distOn, cecos, stMode, aps, hidden, hideComercial]);
   const compOpts = (dimsOpt.companias || []).map(v => ({ value: v, label: v }));
   // Color de marca por compañía (nombre → abrev → color de A.COMPANIAS; MLP/ANT/CEN/CMZ tienen color).
   const compColor = React.useMemo(() => {
@@ -876,7 +921,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         if (off || baseOff) { out.push(dashTd(c.key + '_d')); out.push(dashTd(c.key + '_p')); }
         else {
           const v = valOf(c, node);
-          const dif = baseVal - v;
+          const dif = v - baseVal;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
           const pct = v ? dif / Math.abs(v) : null;   // % Dif = Dif / período (desviación de la base vs ese período)
           out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, viewUnit, dec)}</td>);
           out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 1)}</td>);
@@ -886,11 +931,240 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     return out;
   };
 
+  // Render del resumen ejecutivo (modo Presentación). Dos bloques: (1) por Ítem Relevante con
+  // Mano de Obra en fila aparte, Subtotal (sin MdO), Ahorros comprometidos (manual editable) y
+  // Total (incluye MdO + ahorros); (2) Actividad Corporativa (Gastos + MdO) vs Distribuibles.
+  const renderPresentation = () => {
+    if (!pres) return <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>;
+    const UF = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;   // factor de la unidad en pantalla
+    const unitLbl = viewUnit === 'kUSD' ? 'kUSD' : viewUnit === 'USD' ? 'USD' : 'MM USD';
+    const semHexP = v => (v > thr.red ? '#DC3545' : v <= 0 ? '#1F9D57' : '#E0A800');   // ● semáforo (v = %Dif×100)
+    const isBase = c => baseCol && c.key === baseCol.key;
+    const vAt = (c, agg, add) => (agg ? valOf(c, { agg }) : 0) + ((add && add[c.key]) || 0);
+    const ncols = 1 + cols.reduce((n, c) => n + 1 + (baseCol && !isBase(c) ? 2 : 0), 0);
+    // Estilos de celda por tipo de fila (se aplican a TODAS las celdas de la fila para pintar el fondo).
+    const C_TEAL = { background: '#d6e9ec', color: 'var(--amsa-teal-deep)', fontWeight: 700 };   // Mano de Obra / Act. Corporativa / Distribuibles (destacadas)
+    const C_ITEM = { background: '#fff', color: 'var(--fg-2)' };                                   // ítems (texto tenue)
+    const C_SUB = { background: '#fff', fontWeight: 700, borderTop: '1.5px solid #c9d3d6' };       // Subtotal
+    const C_TOT = { background: '#eceff0', fontWeight: 800, borderTop: '2px solid #b7c2c6', borderBottom: '2px solid #b7c2c6' };  // Total
+    // Fila completa (nombre + valores). `add` = ajuste por columna (Total). Sin '+', % a 0 dec, ● a la izquierda.
+    const rowTds = (label, sub, agg, add, cs) => {
+      cs = cs || {};
+      const tds = [<td key="n" className="name" style={{ padding: '7px 12px', ...cs }}>{label}{sub ? <span style={{ fontWeight: 400, color: 'var(--fg-muted)', fontSize: 11 }}> {sub}</span> : null}</td>];
+      const bv = baseCol ? vAt(baseCol, agg, add) : 0;
+      cols.forEach(c => {
+        const v = vAt(c, agg, add);
+        tds.push(<td key={c.key} className="tnum" style={{ textAlign: 'right', padding: '7px 12px', ...cs }}>{A.fmt(v, viewUnit, dec)}</td>);
+        if (baseCol && !isBase(c)) {
+          const dif = v - bv;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
+          const pct = v ? dif / Math.abs(v) : null;
+          const pv = pct == null ? null : pct * 100;
+          tds.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right', padding: '7px 12px', ...cs }}>{A.fmt(dif, viewUnit, dec)}</td>);
+          tds.push(<td key={c.key + '_p'} className="tnum" style={{ textAlign: 'left', padding: '7px 12px', whiteSpace: 'nowrap', ...cs }}>{pv == null ? <span style={{ color: 'var(--fg-soft)' }}>—</span> : <React.Fragment><span style={{ color: semHexP(pv), fontSize: 12, marginRight: 7 }}>●</span>{A.fmtPct(pct, 0)}</React.Fragment>}</td>);
+        }
+      });
+      return tds;
+    };
+    // Fila editable «Ahorros comprometidos»: SOLO las columnas de Forecast (5+7 / Outlook 6+6)
+    // llevan input (dato manual); el resto va en blanco. El valor se suma al Total de esa columna.
+    const esFcst = c => c.kind === 'fcst' || c.kind === 'out66';
+    const ahorroRow = k => (
+      <tr key={k}>
+        <td className="name" style={{ padding: '5px 12px' }}>Ahorros comprometidos</td>
+        {cols.map(c => {
+          const csl = [<td key={c.key} className="tnum" style={{ textAlign: 'right', padding: '5px 12px' }}>
+            {esFcst(c)
+              ? <input type="number" value={ahorros[c.key] != null ? +(ahorros[c.key] / UF).toFixed(6) : ''} placeholder="0"
+                  onChange={e => { const raw = e.target.value; setAhorros(a => { const n = { ...a }; if (raw === '') delete n[c.key]; else n[c.key] = parseFloat(raw) * UF; return n; }); }}
+                  style={{ width: 88, textAlign: 'right', border: '1px solid #cdd6d8', borderRadius: 4, padding: '3px 6px', fontSize: 12.5, background: '#fff' }} />
+              : null}
+          </td>];
+          if (baseCol && !isBase(c)) { csl.push(<td key={c.key + '_d'}></td>); csl.push(<td key={c.key + '_p'}></td>); }
+          return csl;
+        })}
+      </tr>
+    );
+    const total1Add = {}; cols.forEach(c => { total1Add[c.key] = (pres.mdo ? valOf(c, { agg: pres.mdo }) : 0) + (ahorros[c.key] || 0); });
+    const corpSub = _sumAggs([pres.corpGastos, pres.corpMdo].filter(Boolean));
+    const total2Add = {}; cols.forEach(c => { total2Add[c.key] = valOf(c, { agg: pres.dist }) + (ahorros[c.key] || 0); });
+    const th = (label, sty) => <th style={{ padding: '9px 12px', fontSize: 12.5, whiteSpace: 'nowrap', ...sty }}>{label}</th>;
+    // Filas del primer nivel del bloque 1. En modo Gerencia (orgcc) son un árbol de 2 niveles
+    // (Gerencia › Ítem Relevante) con «▸» para expandir; en modo Ítem Relevante (itemcc) van planas.
+    const hasTree = presDims.length > 1;
+    const C_SUBITEM = { background: '#fafbfc', color: 'var(--fg-muted)' };   // hijos expandidos (Ítem Relevante bajo Gerencia)
+    const togglePres = k => setPresExpanded(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+    const renderTree = (nodes, depth, parentKey) => {
+      const out = [];
+      (nodes || []).forEach(n => {
+        const key = parentKey + '' + n.name;
+        // «Ocultar filas en cero»: omite los Ítems que están en 0 en TODAS las columnas elegidas.
+        if (hideZeros && cols.every(c => vAt(c, n.agg) === 0)) return;
+        const kids = n.children && n.children.length ? n.children : null;
+        const isExp = presExpanded.has(key);
+        const disp = depth === 0 ? presTopDisp : A.dispItem;
+        const nameJsx = (
+          <span style={{ display: 'inline-flex', alignItems: 'center', paddingLeft: depth * 20 }}>
+            {kids
+              ? <span onClick={() => togglePres(key)} title={isExp ? 'Colapsar' : 'Expandir'} style={{ cursor: 'pointer', color: 'var(--amsa-teal)', fontWeight: 700, marginRight: 7, userSelect: 'none', fontSize: 11 }}>{isExp ? '▾' : '▸'}</span>
+              : (hasTree ? <span style={{ display: 'inline-block', width: 18 }} /> : null)}
+            <span>{disp(n.name)}</span>
+          </span>
+        );
+        out.push(<tr key={key}>{rowTds(nameJsx, null, n.agg, null, depth === 0 ? C_ITEM : C_SUBITEM)}</tr>);
+        if (kids && isExp) renderTree(kids, depth + 1, key).forEach(r => out.push(r));
+      });
+      return out;
+    };
+    const semDot = c => <span style={{ color: c, fontSize: 13 }}>●</span>;
+    return (
+      <div style={{ padding: '4px 2px 10px', overflowX: 'auto' }}>
+        {/* Botón de info: explica cómo se calculan Dif y % Dif. */}
+        <div style={{ position: 'relative', marginBottom: 8 }}>
+          <button type="button" onClick={() => setPresInfoOpen(o => !o)} title="Cómo se calculan la Diferencia y la % Dif"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--teal-border)', background: presInfoOpen ? 'var(--teal-wash)' : '#fff', color: 'var(--amsa-teal-deep)', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: '50%', background: 'var(--amsa-teal)', color: '#fff', fontSize: 10.5, fontWeight: 800, fontStyle: 'italic' }}>i</span>
+            ¿Cómo se calcula la Diferencia?
+          </button>
+          {presInfoOpen && (
+            <div style={{ position: 'absolute', zIndex: 60, top: 'calc(100% + 4px)', left: 0, width: 460, maxWidth: 'calc(100vw - 40px)', background: '#fff', border: '1px solid var(--teal-border)', borderRadius: 8, boxShadow: 'var(--shadow-2)', padding: '12px 14px', fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5 }}>
+              <div style={{ marginBottom: 8 }}><b>Diferencia (Dif) = Comparación − Base</b><br />
+                <span style={{ color: 'var(--fg-muted)' }}>Es la resta de cada columna comparada menos la columna base. Si la comparación es <b>menor</b> que la base, la Dif es <b>negativa</b>; si es mayor, positiva.</span></div>
+              <div style={{ marginBottom: 8 }}><b>Diferencia Porcentual (% Dif) = Dif ÷ |Comparación| × 100</b><br />
+                <span style={{ color: 'var(--fg-muted)' }}>La Dif expresada como porcentaje del valor comparado (en valor absoluto). Conserva el signo de la Dif.</span></div>
+              <div style={{ marginBottom: 8 }}>Semáforo en % Dif: {semDot('#1F9D57')} Comparación ≤ Base · {semDot('#E0A800')} supera la Base hasta {thr.red}% · {semDot('#DC3545')} supera la Base en más de {thr.red}%.</div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)', background: 'var(--teal-wash)', borderRadius: 6, padding: '7px 9px' }}>Ejemplo — Base (Ppto 2027) = 100 · Comparación (Real) = 90 → <b>Dif = 90 − 100 = −10</b> · <b>% Dif = −10 ÷ 90 = −11%</b> {semDot('#1F9D57')} (por debajo de la base).</div>
+            </div>
+          )}
+        </div>
+        <table className="mtable" style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+          <thead>
+            <tr>
+              {th(<React.Fragment>{presFirstLbl} <span style={{ opacity: .8, fontWeight: 400 }}>({unitLbl})</span></React.Fragment>, { textAlign: 'left', background: 'var(--amsa-teal)', color: '#fff' })}
+              {cols.map(c => {
+                const arr = [<th key={c.key} style={{ padding: '9px 12px', fontSize: 12.5, whiteSpace: 'nowrap', textAlign: 'right', background: isBase(c) ? '#7d858b' : 'var(--amsa-yellow)', color: isBase(c) ? '#fff' : '#3a2e10' }}>{c.label}</th>];
+                if (baseCol && !isBase(c)) {
+                  arr.push(<th key={c.key + '_d'} style={{ padding: '9px 12px', fontSize: 12, textAlign: 'right', background: 'var(--amsa-teal)', color: '#fff' }}>Dif</th>);
+                  arr.push(<th key={c.key + '_p'} style={{ padding: '9px 12px', fontSize: 12, textAlign: 'left', background: 'var(--amsa-teal)', color: '#fff' }}>% Dif</th>);
+                }
+                return arr;
+              })}
+            </tr>
+          </thead>
+          {/* BLOQUE 1 — Mano de Obra ARRIBA (destacada), luego el primer nivel (Ítem Relevante o Gerencia
+              expandible), Subtotal (sin MdO), Ahorros y Total (con MdO). */}
+          <tbody>
+            {pres.mdo && <tr>{rowTds('Mano de Obra', null, pres.mdo, null, C_TEAL)}</tr>}
+            {renderTree(pres.items, 0, 'r|')}
+            <tr>{rowTds('Subtotal', null, pres.subtotal, null, C_SUB)}</tr>
+            {ahorroRow('a1')}
+            <tr>{rowTds('Total', '(incluye Mano de Obra)', pres.subtotal, total1Add, C_TOT)}</tr>
+          </tbody>
+          <tbody><tr><td colSpan={ncols} style={{ height: 24, border: 0, background: 'transparent' }}></td></tr></tbody>
+          {/* BLOQUE 2 — Actividad Corporativa (agregado arriba) vs Distribuibles */}
+          <tbody>
+            <tr>{rowTds('Actividad Corporativa', null, corpSub, null, C_TEAL)}</tr>
+            <tr>{rowTds('Gastos Act. Corporativa', null, pres.corpGastos, null, C_ITEM)}</tr>
+            {pres.corpMdo && <tr>{rowTds('Mano de Obra', null, pres.corpMdo, null, C_ITEM)}</tr>}
+            <tr>{rowTds('Distribuibles', null, pres.dist, null, C_TEAL)}</tr>
+            <tr>{rowTds('Subtotal', null, corpSub, null, C_SUB)}</tr>
+            {ahorroRow('a2')}
+            <tr>{rowTds('Total', null, corpSub, total2Add, C_TOT)}</tr>
+          </tbody>
+        </table>
+        <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.5, marginTop: 12 }}>
+          <b>Mano de Obra</b> va en fila aparte: el <b>Subtotal</b> la excluye y el <b>Total</b> la incluye (más los <b>Ahorros comprometidos</b>, ajuste manual editable). <b>Dif = Comparación − Base</b> (negativa si es menor). Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Comparación ≤ Base · <span style={{ color: '#E0A800' }}>●</span> supera hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> supera en más de {thr.red}%.
+        </div>
+      </div>
+    );
+  };
+
+  // Exporta el RESUMEN EJECUTIVO (modo Presentación) a Excel: mismos dos bloques que en pantalla,
+  // Mano de Obra arriba, Subtotal (sin MdO), Ahorros comprometidos (solo Forecast) y Total (con MdO).
+  const exportarPresentacion = () => {
+    const unitLbl = viewUnit === 'kUSD' ? 'kUSD' : viewUnit === 'USD' ? 'USD' : 'MM USD';
+    const div = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;
+    const f = Math.pow(10, dec);
+    const nc = raw => ({ t: 'n', v: Math.round((raw / div) * f) / f });
+    const sty = _buildSheetStyles(dec);
+    const Fnone = sty.FILL.none, Ftot = sty.FILL.total, Flvl1 = sty.FILL.lvl1;
+    const Bgrid = sty.BORD.grid, Btot = sty.BORD.total;
+    const INK = 'FF1F2428';
+    const semHex = v => (v > thr.red ? 'FFDC3545' : v <= 0 ? 'FF1F9D57' : 'FFE0A800');
+    const isB = c => baseCol && c.key === baseCol.key;
+    const meta = [];   // val / dif / pct por columna (Dif y % Dif SIEMPRE en presentación)
+    cols.forEach(c => { meta.push('val'); if (baseCol && !isB(c)) { meta.push('dif'); meta.push('pct'); } });
+    const header = [{ v: presFirstLbl + ' (' + unitLbl + ')', s: sty.hdrStruct }];
+    cols.forEach(c => {
+      header.push({ v: c.label, s: isB(c) ? sty.hdrBase : sty.hdrPpto });
+      if (baseCol && !isB(c)) { header.push({ v: 'Dif', s: sty.hdrDif }); header.push({ v: '% Dif', s: sty.hdrDif }); }
+    });
+    const rawVals = (agg, add) => {
+      const bv = baseCol ? ((agg ? valOf(baseCol, { agg }) : 0) + ((add && add[baseCol.key]) || 0)) : 0;
+      const out = [];
+      cols.forEach(c => {
+        const v = (agg ? valOf(c, { agg }) : 0) + ((add && add[c.key]) || 0);
+        out.push(nc(v));
+        if (baseCol && !isB(c)) {
+          const dif = v - bv, pct = v ? dif / Math.abs(v) : null;   // Dif = Comparación − Base
+          out.push(nc(dif));
+          out.push(pct == null ? '' : { t: 'n', v: Math.round(pct * 1000) / 10 });
+        }
+      });
+      return out;
+    };
+    const styleRow = (raw, bold, fill, bord) => raw.map((rc, i) => {
+      if (rc === '' || rc == null || rc.v == null || !isFinite(rc.v)) return { v: '', s: sty.blank(bold, fill, bord) };
+      if (meta[i] === 'val') return { t: 'n', v: rc.v, s: sty.num(bold, fill, bord) };
+      if (meta[i] === 'dif') return { t: 'n', v: rc.v, s: sty.difPlain(bold, fill, bord) };
+      const v = rc.v, txt = A.fmtPct(v / 100, 0);   // % Dif: ● semáforo + porcentaje (0 dec, sin '+')
+      return { rich: [{ t: '●', color: semHex(v), bold }, { t: ' ' + txt, color: INK, bold }], s: sty.blank(bold, fill, bord) };
+    });
+    const rowOf = (label, agg, add, bold, fill, bord) => [{ v: label, s: sty.name(bold, fill, bord) }, ...styleRow(rawVals(agg, add), bold, fill, bord)];
+    // Ahorros comprometidos: número manual SOLO en la columna Forecast; resto vacío (incl. Dif/% Dif).
+    const ahorroRaw = () => { const out = []; cols.forEach(c => { out.push((c.kind === 'fcst' || c.kind === 'out66') && ahorros[c.key] ? nc(ahorros[c.key]) : ''); if (baseCol && !isB(c)) { out.push(''); out.push(''); } }); return out; };
+    const ahorroRow = () => [{ v: 'Ahorros comprometidos', s: sty.name(false, Fnone, Bgrid) }, ...styleRow(ahorroRaw(), false, Fnone, Bgrid)];
+    const spacer = () => [{ v: '', s: sty.blank(false, Fnone, null) }, ...meta.map(() => ({ v: '', s: sty.blank(false, Fnone, null) }))];
+    const corpSub = _sumAggs([pres.corpGastos, pres.corpMdo].filter(Boolean));
+    const t1 = {}; cols.forEach(c => { t1[c.key] = (pres.mdo ? valOf(c, { agg: pres.mdo }) : 0) + (ahorros[c.key] || 0); });
+    const t2 = {}; cols.forEach(c => { t2[c.key] = valOf(c, { agg: pres.dist }) + (ahorros[c.key] || 0); });
+    const matrix = [header];
+    if (pres.mdo) matrix.push(rowOf('Mano de Obra', pres.mdo, null, true, Flvl1, Bgrid));
+    // Primer nivel (Ítem o Gerencia); en modo Gerencia se agrega su detalle Ítem sangrado.
+    // Respeta «Ocultar filas en cero»: omite los Ítems en 0 en TODAS las columnas (igual que en pantalla).
+    const _expZero = agg => cols.every(c => (agg ? valOf(c, { agg }) : 0) === 0);
+    pres.items.forEach(n => {
+      if (hideZeros && _expZero(n.agg)) return;
+      matrix.push(rowOf(presTopDisp(n.name), n.agg, null, false, Fnone, Bgrid));
+      (n.children || []).forEach(ch => { if (!(hideZeros && _expZero(ch.agg))) matrix.push(rowOf('    ' + A.dispItem(ch.name), ch.agg, null, false, Fnone, Bgrid)); });
+    });
+    matrix.push(rowOf('Subtotal', pres.subtotal, null, true, Fnone, Bgrid));
+    matrix.push(ahorroRow());
+    matrix.push(rowOf('Total (incluye Mano de Obra)', pres.subtotal, t1, true, Ftot, Btot));
+    matrix.push(spacer());
+    matrix.push(rowOf('Actividad Corporativa', corpSub, null, true, Flvl1, Bgrid));
+    matrix.push(rowOf('Gastos Act. Corporativa', pres.corpGastos, null, false, Fnone, Bgrid));
+    if (pres.corpMdo) matrix.push(rowOf('Mano de Obra', pres.corpMdo, null, false, Fnone, Bgrid));
+    matrix.push(rowOf('Distribuibles', pres.dist, null, true, Flvl1, Bgrid));
+    matrix.push(rowOf('Subtotal', corpSub, null, true, Fnone, Bgrid));
+    matrix.push(ahorroRow());
+    matrix.push(rowOf('Total', corpSub, t2, true, Ftot, Btot));
+    const widths = [40]; meta.forEach(m => widths.push(m === 'val' ? 15 : m === 'dif' ? 12 : 11));
+    const url = URL.createObjectURL(_xlsxStyled(('Resumen ejecutivo ' + unitLbl).slice(0, 31), matrix, {
+      stylesXml: sty.xml(), cols: widths, freeze: { x: 1, y: 1, cell: 'B2' }, rowHeights: { 0: 30 },
+    }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `Resumen ejecutivo (${unitLbl}).xlsx`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+
   // Descargar la tabla TAL CUAL como Excel (.xlsx nativo, sin librerías): respeta las filas
   // visibles (expandido/colapsado + búsqueda), las columnas activas (base + comparar), Dif/% Dif
   // si están activos, y los decimales actuales. La UNIDAD es la misma del selector en pantalla
   // (viewUnit: MM USD / kUSD / USD). Los valores van como NÚMERO (no texto).
   const exportarExcel = () => {
+    // En modo Presentación se exporta el RESUMEN EJECUTIVO (dos bloques), no la tabla-árbol del
+    // Comparador. Reutiliza los mismos estilos: base gris, resto dorado, Dif/%Dif teal, ● semáforo.
+    if (formato === 'pres' && pres) { exportarPresentacion(); return; }
     const div = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;
     const f = Math.pow(10, dec);
     const numCell = raw => ({ t: 'n', v: Math.round((raw / div) * f) / f });
@@ -932,7 +1206,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           if (off || baseOff) { out.push(''); out.push(''); }
           else {
             const v = valOf(c, node);
-            const dif = baseVal - v;
+            const dif = v - baseVal;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
             const pct = v ? dif / Math.abs(v) : null;   // ratio; se exporta como %-puntos (×100)
             out.push(numCell(dif));
             out.push(pct == null ? '' : { t: 'n', v: Math.round(pct * 1000) / 10 });
@@ -1111,7 +1385,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
               <div style={cap}>Estructura CECOS</div>
               <select value={cecoMode} onChange={e => onCecoMode(e.target.value)} style={fctlSel}>
                 <option value="new">Nuevos</option>
-                <option value="old">Antiguos</option>
+                <option value="old">Antiguos</option><option value="ajustes">Nueva con ajustes</option>
               </select>
             </div>
             </div>
@@ -1163,7 +1437,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div className="fgroup" style={{ minWidth: 140 }}>
               <div style={cap}>Agrupar por</div>
-              <select value={groupMode} onChange={e => { setGroupMode(e.target.value); setDimOrder(null); setExpanded(new Set()); }} style={{ ...fctlSel, maxWidth: 180 }}
+              <select value={groupMode} onChange={e => { setGroupMode(e.target.value); setDimOrder(null); setExpanded(new Set()); setPresExpanded(new Set()); }} style={{ ...fctlSel, maxWidth: 180 }}
                 title="La tabla mantiene todo el detalle; esto define el orden principal (arrastra el encabezado para reordenar).">
                 <option value="orgcc">VP › Ítem Relevante</option>
                 <option value="itemcc">Ítem Relevante › VP</option>
@@ -1279,6 +1553,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
                   </div>
                   <div style={{ height: 1, background: 'var(--line)' }} />
                   <label style={optChk}><input type="checkbox" checked={showDif} onChange={e => setShowDif(e.target.checked)} /> Mostrar Dif / % Dif</label>
+                  <label style={optChk} title="Oculta las filas que están en 0 en TODAS las columnas seleccionadas (base + comparaciones)."><input type="checkbox" checked={hideZeros} onChange={e => setHideZeros(e.target.checked)} /> Ocultar filas en cero</label>
                 </div>
               )}
             </div>
@@ -1315,8 +1590,8 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       <div className="matrix-card" style={{ marginTop: 12 }}>
         <div className="matrix-top" style={{ flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h3>Comparación por período</h3>
-            <div className="mt-sub">{({ both: 'Corporativo + Distribuible', corp: 'Corporativo', dist: 'Distribuible', none: 'Sin datos' })[dataMode]}{baseCol ? ' · base: ' + baseCol.label : ''}</div>
+            <h3>{formato === 'pres' ? 'Resumen ejecutivo' : 'Comparación por período'}</h3>
+            <div className="mt-sub">{({ both: 'Corporativo + Distribuible', corp: 'Corporativo', dist: 'Distribuible', none: 'Sin datos' })[dataMode]}{baseCol ? ' · base: ' + baseCol.label : ''}{formato === 'pres' ? ' · por ' + presFirstLbl : ''}</div>
           </div>
           {/* A la mano sobre la tabla (junto a Buscar): toggles «Incluir» (S&T / Mano de Obra) + buscador. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -1335,11 +1610,16 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
                 )}
               </div>
             )}
+            <label style={incChk} title="Marcado (por defecto): oculta el Ítem COMERCIALI (Cód. Agrupación4) en todo el dashboard.">
+              <input type="checkbox" checked={hideComercial !== false} onChange={e => onHideComercial(e.target.checked)} /> Ocultar Comercialización
+            </label>
+            {formato !== 'pres' && (
             <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
               <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar VP / Gerencia / Ítem…"
                 style={{ ...fctlSel, cursor: 'text', paddingRight: 26, minWidth: 230, maxWidth: 300 }} />
               {q && <button type="button" onClick={() => setQ('')} title="Limpiar búsqueda" style={{ position: 'absolute', right: 6, border: 0, background: 'transparent', cursor: 'pointer', color: 'var(--fg-soft)', fontSize: 14, padding: 2 }}>×</button>}
             </span>
+            )}
           </div>
         </div>
         {/* Barrita de scroll horizontal ARRIBA, sincronizada con la tabla. */}
@@ -1349,6 +1629,8 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         <div ref={tblWrapRef} onScroll={onTblScroll} style={{ overflowX: 'auto' }}>
           {cols.length === 0
             ? <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>
+            : formato === 'pres'
+            ? renderPresentation()
             : (
             <table className="mtable resumen">
               <thead>
@@ -1451,15 +1733,15 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
                 </tr>
               </thead>
               <tbody>
-                {flat.map(row => (
+                {flatShown.map(row => (
                   <tr key={row.key} className={'row-' + row.type}>
                     <td className="name" style={nameW != null ? { width: nameW, maxWidth: nameW } : undefined}><Twig row={row} expanded={expanded} onToggle={onToggle} dims={dims} onPick={onPick} active={rowActive(row)} onHide={hideVal} /></td>
                     {rowCells(row.node, row.fam)}
                     <td className="spacer-fill" style={{ width: spacerW }}></td>
                   </tr>
                 ))}
-                {flat.length === 0 && <tr><td className="name" colSpan={2 + cols.length + (showDif ? (cols.length - 1) * 2 : 0)}>Sin resultados</td></tr>}
-                {flat.truncated && <tr><td colSpan={20} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--amsa-teal-deep)', background: 'var(--accent-wash)', fontWeight: 600 }}>Mostrando las primeras {flat.truncated.toLocaleString('es-CL')} filas. Afiná la búsqueda o expandí manualmente para ver el resto.</td></tr>}
+                {flatShown.length === 0 && <tr><td className="name" colSpan={2 + cols.length + (showDif ? (cols.length - 1) * 2 : 0)}>{hideZeros && flat.length ? 'Todas las filas están en cero en las columnas elegidas (desactiva «Ocultar filas en cero» para verlas).' : 'Sin resultados'}</td></tr>}
+                {flatShown.truncated && <tr><td colSpan={20} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--amsa-teal-deep)', background: 'var(--accent-wash)', fontWeight: 600 }}>Mostrando las primeras {flatShown.truncated.toLocaleString('es-CL')} filas. Afiná la búsqueda o expandí manualmente para ver el resto.</td></tr>}
                 <tr className="row-total">
                   <td className="name" style={nameW != null ? { width: nameW, maxWidth: nameW } : undefined}>Total</td>
                   {rowCells({ agg: totalAgg })}
@@ -1575,6 +1857,7 @@ function CapexView() {
   const grpCard = { display: 'flex', flexDirection: 'column', minWidth: 300, maxWidth: '100%', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px', boxSizing: 'border-box' };
   const fctlSel = { height: 34, padding: '0 10px', border: '1px solid #cdd6d8', borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-sans)', color: 'var(--ink)', cursor: 'pointer', background: '#fff', boxSizing: 'border-box' };
   const barBtn = { height: 34, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 12px', border: '1px solid var(--teal-border)', borderRadius: 6, background: '#fff', color: 'var(--amsa-teal)', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap' };
+  const chkChip = on => ({ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 11px', borderRadius: 6, cursor: 'pointer', boxSizing: 'border-box', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', border: on ? '1px solid var(--amsa-teal)' : '1px solid var(--teal-border)', background: on ? 'var(--teal-wash)' : '#fff', color: on ? 'var(--amsa-teal-deep)' : 'var(--fg-soft)' });
 
   const [expanded, setExpanded] = useState(() => new Set());
   const [q, setQ] = useState('');
@@ -1582,7 +1865,11 @@ function CapexView() {
   const [ests, setEsts] = useState([]);
   const [unit, setUnit] = useState('MUSD');
   const [dec, setDec] = useState(1);
+  const [showC, setShowC] = useState(true);    // mostrar Costo ($)
+  const [showA, setShowA] = useState(false);   // mostrar Avance físico (%). Dos casillas independientes; al menos una activa.
   const [hidden, setHidden] = useState(() => new Set());
+  const [order, setOrder] = useState(() => ['sd', 'vp', 'ger', 'nr', 'proj']);   // orden de los niveles (arrastrable)
+  const [dragDim, setDragDim] = useState(null);
 
   if (!D || !D.rows || !D.rows.length) {
     return <div className="empty-msg" style={{ padding: 24 }}>No hay datos de CAPEX cargados (window.CAPEX_DATA).</div>;
@@ -1595,9 +1882,16 @@ function CapexView() {
     { key: 'nr', label: 'Nuevo / Remanente' },
     { key: 'proj', label: 'Proyecto (PEP)' },
   ];
-  const dims = ALL_DIMS.filter(d => !hidden.has(d.key));
-  const ghost = ALL_DIMS.filter(d => hidden.has(d.key));
+  const byKey = k => ALL_DIMS.find(d => d.key === k);
+  const dims = order.map(byKey).filter(d => d && !hidden.has(d.key));
+  const ghost = order.map(byKey).filter(d => d && hidden.has(d.key));
   const dimKeys = dims.map(d => d.key);
+  // Reordenar niveles arrastrando: mueve 'from' delante de 'to'.
+  const reorderDim = (from, to) => {
+    if (!from || from === to) return;
+    setOrder(prev => { const a = prev.filter(k => k !== from); const i = a.indexOf(to); a.splice(i < 0 ? a.length : i, 0, from); return a; });
+    setExpanded(new Set());
+  };
 
   const compOpts = [...new Set(D.rows.map(r => r.comp))].sort().map(v => ({ value: v, label: v }));
   const estOpts = [...new Set(D.rows.map(r => r.est))].sort().map(v => ({ value: v, label: v }));
@@ -1610,9 +1904,17 @@ function CapexView() {
        (r.ger && r.ger.toLowerCase().includes(ql)) || (r.vp && r.vp.toLowerCase().includes(ql))));
 
   // Árbol por la estructura activa; cada nodo agrega los 12 meses + Total.
-  const mkNode = (name, key, dim, pep) => ({ name, key, dim, pep, m: new Array(12).fill(0), tot: 0, kids: new Map() });
+  const mkNode = (name, key, dim, pep) => ({ name, key, dim, pep, m: new Array(12).fill(0), tot: 0, fcst: 0, f0w: 0, f0b: 0, fw: new Array(12).fill(0), fb: new Array(12).fill(0), kids: new Map() });
   const root = mkNode('__root__', '', null, null);
-  const addAgg = (nd, r) => { nd.tot += r.tot; for (let i = 0; i < 12; i++) nd.m[i] += r.m[i]; };
+  // Money (m, tot, fcst): suma. Avance físico %: PROMEDIO SIMPLE de los proyectos que reportan
+  // (fw = Σ %, fb = nº de proyectos con dato → % = fw/fb). Los proyectos sin dato se excluyen.
+  const addAgg = (nd, r) => {
+    nd.tot += r.tot; nd.fcst += (r.fcst || 0);
+    if (r.f0 != null) { nd.f0w += r.f0; nd.f0b += 1; }
+    for (let i = 0; i < 12; i++) { nd.m[i] += r.m[i]; if (r.f && r.f[i] != null) { nd.fw[i] += r.f[i]; nd.fb[i] += 1; } }
+  };
+  const fAt = (nd, i) => nd.fb[i] > 0 ? nd.fw[i] / nd.fb[i] : null;   // % avance físico del nodo en el mes i (promedio simple)
+  const f0At = nd => nd.f0b > 0 ? nd.f0w / nd.f0b : null;             // % avance físico al cierre Dic-26 (promedio simple)
   rows.forEach(r => {
     addAgg(root, r);
     let nd = root;
@@ -1640,19 +1942,43 @@ function CapexView() {
   const expandAll = () => { const s = new Set(); const w = nd => nd.kids.forEach(k => { if (k.kids.size) { s.add(k.key); w(k); } }); w(root); setExpanded(s); };
   const collapseAll = () => setExpanded(new Set());
   const fmt = v => A.fmt(v, unit, dec);
+  const pct = v => v == null ? '—' : Math.round(v * 100) + '%';
   const headerLbl = dims.map(d => d.label).join(' › ');
   const unitLbl = unit === 'MUSD' ? 'MM USD' : unit;
+  const isBoth = showC && showA;        // costo ($) + avance (%) juntos, doble valor por celda
+  const isAv = showA && !showC;         // solo avance físico
+  const toggleC = () => { if (showC && !showA) return; setShowC(!showC); };   // al menos una casilla queda activa
+  const toggleA = () => { if (showA && !showC) return; setShowA(!showA); };
+  const metricLbl = isBoth ? unitLbl + ' + % avance' : isAv ? '% avance físico acumulado' : unitLbl;
+  const dualCell = (money, prc) => (   // celda de doble valor: $ arriba, % abajo
+    <React.Fragment>
+      <div>{fmt(money)}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--amsa-teal)' }}>{pct(prc)}</div>
+    </React.Fragment>
+  );
+  const cellVal = (nd, i) => isBoth ? dualCell(nd.m[i], fAt(nd, i)) : isAv ? pct(fAt(nd, i)) : fmt(nd.m[i]);   // celda mensual según métrica
+  const totVal = nd => isBoth ? dualCell(nd.tot, fAt(nd, 11)) : isAv ? pct(fAt(nd, 11)) : fmt(nd.tot);          // Total 2027 $ (+ % cierre en Ambos)
+  const fcstVal = nd => isBoth ? dualCell(nd.fcst, f0At(nd)) : isAv ? pct(f0At(nd)) : fmt(nd.fcst);             // Forecast 5+7 2026 (Acum Dic-26)
+  const superLbl = isBoth ? 'Ppto 2027 · Avance físico' : isAv ? 'Avance físico 2027' : 'Ppto 2027';           // encabezado-grupo
 
   const exportar = () => {
-    const div = unit === 'kUSD' ? 1e3 : unit === 'USD' ? 1 : 1e6, f = Math.pow(10, dec);
-    const numCell = v => ({ t: 'n', v: Math.round((v / div) * f) / f });
-    const headers = [headerLbl, ...D.months.map(m => m + '-27'), 'Total 2027'];
+    let headers, cellFn, totFn, fcFn, sheet;
+    if (isAv) {
+      const pn = v => v == null ? '' : { t: 'n', v: Math.round(v * 1000) / 10 };   // % con 1 decimal, como número
+      headers = [headerLbl, 'Forecast 5+7 2026 %', ...D.months.map(m => 'F ' + m + '-27 %'), '% Cierre'];
+      cellFn = (nd, i) => pn(fAt(nd, i)); totFn = nd => pn(fAt(nd, 11)); fcFn = nd => pn(f0At(nd)); sheet = 'CAPEX avance físico';
+    } else {
+      const div = unit === 'kUSD' ? 1e3 : unit === 'USD' ? 1 : 1e6, f = Math.pow(10, dec);
+      const num = v => ({ t: 'n', v: Math.round((v / div) * f) / f });
+      headers = [headerLbl, 'Forecast 5+7 2026', ...D.months.map(m => m + '-27'), 'Total 2027'];
+      cellFn = (nd, i) => num(nd.m[i]); totFn = nd => num(nd.tot); fcFn = nd => num(nd.fcst); sheet = 'CAPEX 2027 ' + unitLbl;
+    }
     const out = flat.map(row => ['    '.repeat(row.depth) + row.node.name + (row.node.pep ? ' (' + row.node.pep + ')' : ''),
-      ...row.node.m.map(numCell), numCell(row.node.tot)]);
-    out.push(['TOTAL', ...root.m.map(numCell), numCell(root.tot)]);
-    const blob = _xlsx('CAPEX 2027', headers, out);
+      fcFn(row.node), ...D.months.map((m, i) => cellFn(row.node, i)), totFn(row.node)]);
+    out.push(['TOTAL', fcFn(root), ...D.months.map((m, i) => cellFn(root, i)), totFn(root)]);
+    const blob = _xlsx(sheet, headers, out);
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'CAPEX 2027 ' + unitLbl + '.xlsx'; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = sheet + '.xlsx'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
 
@@ -1660,7 +1986,7 @@ function CapexView() {
     <div>
       <div style={{ margin: '4px 0 12px' }}>
         <h2 style={{ fontFamily: 'var(--font-disp)', fontWeight: 800, fontSize: 18, color: 'var(--ink)', margin: 0 }}>CAPEX 2027</h2>
-        <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Presupuesto CAPEX por {headerLbl} · desglose mensual · {unitLbl}</div>
+        <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 2 }}>Presupuesto CAPEX por {headerLbl} · desglose mensual · {metricLbl}</div>
       </div>
 
       <div className="filters" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'stretch' }}>
@@ -1687,15 +2013,26 @@ function CapexView() {
         <div style={{ ...grpCard, flex: '1 1 360px' }}>
           <div style={grpCap}>Vista y acciones</div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <div className="fgroup" style={{ minWidth: 120 }}>
+            <div className="fgroup">
+              <div style={cap}>Mostrar en la tabla</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <label style={chkChip(showC)} title="Mostrar el costo ($). Al menos una casilla queda activa.">
+                  <input type="checkbox" checked={showC} onChange={toggleC} /> Costo
+                </label>
+                <label style={chkChip(showA)} title="Mostrar el avance físico (% acumulado). Con las dos activas se ve costo y avance juntos.">
+                  <input type="checkbox" checked={showA} onChange={toggleA} /> Avance físico
+                </label>
+              </div>
+            </div>
+            <div className="fgroup" style={{ minWidth: 120, opacity: isAv ? 0.45 : 1 }}>
               <div style={cap}>Unidad</div>
-              <select value={unit} onChange={e => setUnit(e.target.value)} style={fctlSel}>
+              <select value={unit} onChange={e => setUnit(e.target.value)} style={fctlSel} disabled={isAv}>
                 <option value="MUSD">MM USD</option><option value="kUSD">kUSD</option><option value="USD">USD</option>
               </select>
             </div>
-            <div className="fgroup" style={{ minWidth: 90 }}>
+            <div className="fgroup" style={{ minWidth: 90, opacity: isAv ? 0.45 : 1 }}>
               <div style={cap}>Decimales</div>
-              <select value={dec} onChange={e => setDec(+e.target.value)} style={fctlSel}>{[0, 1, 2].map(d => <option key={d} value={d}>{d}</option>)}</select>
+              <select value={dec} onChange={e => setDec(+e.target.value)} style={fctlSel} disabled={isAv}>{[0, 1, 2].map(d => <option key={d} value={d}>{d}</option>)}</select>
             </div>
             <button type="button" onClick={() => expanded.size ? collapseAll() : expandAll()} style={barBtn}>{expanded.size ? '⤒ Colapsar' : '⤓ Expandir'}</button>
             <button type="button" onClick={exportar} style={{ ...barBtn, background: 'var(--amsa-teal)', color: '#fff', border: '1px solid var(--amsa-teal)' }}>⭳ Exportar</button>
@@ -1709,9 +2046,17 @@ function CapexView() {
         {dims.map((d, i) => (
           <React.Fragment key={d.key}>
             {i > 0 && <span style={{ color: 'var(--fg-muted)' }}>›</span>}
-            <span style={{ padding: '2px 4px 2px 8px', borderRadius: 5, background: 'var(--teal-100)', color: 'var(--amsa-teal-deep)', fontSize: 11.5, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span draggable
+              onDragStart={() => setDragDim(d.key)}
+              onDragEnd={() => setDragDim(null)}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); reorderDim(dragDim, d.key); setDragDim(null); }}
+              title="Arrastra para reordenar este nivel"
+              style={{ cursor: 'grab', padding: '2px 4px 2px 8px', borderRadius: 5, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4,
+                background: dragDim === d.key ? 'var(--amsa-teal)' : 'var(--teal-100)', color: dragDim === d.key ? '#fff' : 'var(--amsa-teal-deep)',
+                fontSize: 11.5, fontWeight: 700, opacity: dragDim === d.key ? 0.7 : 1 }}>
               {d.label}
-              {dims.length > 1 && <span onClick={() => { setHidden(s => { const n = new Set(s); n.add(d.key); return n; }); setExpanded(new Set()); }} title="Quitar nivel" style={{ cursor: 'pointer', fontSize: 13, opacity: .6, padding: '0 3px' }}>×</span>}
+              {dims.length > 1 && <span onClick={e => { e.stopPropagation(); setHidden(s => { const n = new Set(s); n.add(d.key); return n; }); setExpanded(new Set()); }} title="Quitar nivel" style={{ cursor: 'pointer', fontSize: 13, opacity: .6, padding: '0 3px' }}>×</span>}
             </span>
           </React.Fragment>
         ))}
@@ -1721,14 +2066,18 @@ function CapexView() {
       </div>
 
       <div className="matrix-card" style={{ marginTop: 12 }}>
-        <div className="matrix-top"><div><h3>CAPEX 2027 · desglose mensual</h3><div className="mt-sub">{rows.length} proyecto{rows.length === 1 ? '' : 's'}{(comps.length || ests.length || q) ? ' (filtrado)' : ''} · {unitLbl}</div></div></div>
+        <div className="matrix-top"><div><h3>CAPEX 2027 · {isAv ? 'avance físico' : isBoth ? 'costo + avance' : 'desglose mensual'}</h3><div className="mt-sub">{rows.length} proyecto{rows.length === 1 ? '' : 's'}{(comps.length || ests.length || q) ? ' (filtrado)' : ''} · {metricLbl}</div></div></div>
         <div style={{ overflowX: 'auto' }}>
           <table className="mtable resumen">
             <thead>
               <tr className="cols">
-                <th className="left" style={{ textAlign: 'left', position: 'sticky', left: 0, zIndex: 6 }}>{headerLbl}</th>
+                <th className="left" rowSpan={2} style={{ textAlign: 'left', position: 'sticky', left: 0, zIndex: 6 }}>Proyectos CAPEX</th>
+                <th rowSpan={2} style={{ background: 'var(--amsa-teal-deep)', color: '#fff', textAlign: 'right', whiteSpace: 'nowrap' }}>Forecast 5+7 2026</th>
+                <th colSpan={isAv ? 12 : 13} style={{ background: 'var(--amsa-teal)', color: '#fff', textAlign: 'center', letterSpacing: '.04em' }}>{superLbl}</th>
+              </tr>
+              <tr className="cols">
                 {D.months.map(m => <th key={m} style={{ background: 'var(--amsa-yellow)', color: '#3a2e10', textAlign: 'right' }}>{m}</th>)}
-                <th style={{ background: '#717981', color: '#fff', textAlign: 'right' }}>Total 2027</th>
+                {!isAv && <th style={{ background: '#717981', color: '#fff', textAlign: 'right' }}>Total 2027</th>}
               </tr>
             </thead>
             <tbody>
@@ -1743,15 +2092,17 @@ function CapexView() {
                       {row.node.pep ? <span style={{ marginLeft: 7, fontSize: 10.5, color: 'var(--fg-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{row.node.pep}</span> : null}
                     </span>
                   </td>
-                  {row.node.m.map((v, i) => <td key={i} className="tnum" style={{ textAlign: 'right' }}>{fmt(v)}</td>)}
-                  <td className="tnum" style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(row.node.tot)}</td>
+                  <td className="tnum" style={{ textAlign: 'right', background: 'var(--teal-wash)' }}>{fcstVal(row.node)}</td>
+                  {row.node.m.map((v, i) => <td key={i} className="tnum" style={{ textAlign: 'right' }}>{cellVal(row.node, i)}</td>)}
+                  {!isAv && <td className="tnum" style={{ textAlign: 'right', fontWeight: 700 }}>{totVal(row.node)}</td>}
                 </tr>
               ))}
-              {flat.length === 0 && <tr><td className="name" colSpan={14}>Sin resultados</td></tr>}
+              {flat.length === 0 && <tr><td className="name" colSpan={isAv ? 14 : 15}>Sin resultados</td></tr>}
               <tr className="row-total">
                 <td className="name" style={{ position: 'sticky', left: 0, zIndex: 3 }}>Total</td>
-                {root.m.map((v, i) => <td key={i} className="tnum" style={{ textAlign: 'right' }}>{fmt(v)}</td>)}
-                <td className="tnum" style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(root.tot)}</td>
+                <td className="tnum" style={{ textAlign: 'right', background: 'var(--teal-wash)' }}>{fcstVal(root)}</td>
+                {root.m.map((v, i) => <td key={i} className="tnum" style={{ textAlign: 'right' }}>{cellVal(root, i)}</td>)}
+                {!isAv && <td className="tnum" style={{ textAlign: 'right', fontWeight: 700 }}>{totVal(root)}</td>}
               </tr>
             </tbody>
           </table>
@@ -1968,6 +2319,30 @@ function DotacionesView() {
 }
 
 
+// Red de seguridad: si una vista lanza un error al dibujarse, en vez de dejar la PÁGINA EN BLANCO
+// muestra un mensaje recuperable con el detalle del error (para diagnosticar) y botones de recuperación.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { try { console.error('Dashboard render error:', err, info && info.componentStack); } catch (_) {} }
+  render() {
+    if (!this.state.err) return this.props.children;
+    const e = this.state.err;
+    return (
+      <div style={{ margin: 20, padding: '18px 20px', border: '1px solid #e3b7b7', borderRadius: 10, background: '#fff7f7', color: '#5a1a1a', fontFamily: 'var(--font-sans)' }}>
+        <h3 style={{ margin: '0 0 6px', color: '#b00020' }}>Esta vista falló al dibujarse</h3>
+        <p style={{ margin: '0 0 10px', fontSize: 13 }}>Cambia de pestaña o recarga. Si vuelve a pasar, mándame una captura de este detalle:</p>
+        <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, background: '#fff', border: '1px solid #eecccc', borderRadius: 6, padding: 10, maxHeight: 240, overflow: 'auto' }}>{String((e && (e.stack || e.message)) || e)}</pre>
+        <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => { try { this.setState({ err: null }); } catch (_) {} }}>Reintentar</button>
+          <button className="btn" onClick={() => { try { location.reload(); } catch (_) {} }}>Recargar</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+
 function App() {
   const A = window.CORP;
   const TX = window.TEXTOS;
@@ -2081,9 +2456,12 @@ function App() {
   const [pinnedCols, setPinnedCols] = useState([]); // columnas fijadas (sticky)
   // Toggles globales del modelo: valor ('n' Normal | 'a' Ajustada 2027) · CECOS ('new'|'old').
   const [valMode, setValModeS] = useState('n');
-  const [cecoMode, setCecoModeS] = useState('new');   // Estructura CECOS por defecto: Nueva
+  const [cecoMode, setCecoModeS] = useState('ajustes');   // Estructura CECOS por defecto: Nueva con ajustes
   const onValMode = useCallback(m => { A.setValMode(m); A.applyVpOverrides(vpov); A.applyCecoNameOverrides(cecoNames); setValModeS(m); }, [vpov, cecoNames]);
   const onCecoMode = useCallback(m => { A.setCecoMode(m); A.applyVpOverrides(vpov); A.applyCecoNameOverrides(cecoNames); setCecoModeS(m); }, [vpov, cecoNames]);
+  // Filtro global «Comercialización»: oculta el Ítem COMERCIALI en TODO el dashboard. ON por defecto.
+  const [hideComercial, setHideComercialS] = useState(true);
+  const onHideComercial = useCallback(b => { A.setHideComercial(b); A.applyVpOverrides(vpov); A.applyCecoNameOverrides(cecoNames); setHideComercialS(b); }, [vpov, cecoNames]);
 
   const showProp = !!st.showProp;
   const histYears = st.years.filter(y => typeof y === 'number').sort((a, b) => a - b);
@@ -2105,7 +2483,7 @@ function App() {
     years: st.years, showProp, donutMetric: st.donutMetric, yearAgg: st.yearAgg, version: st.version, dataMode: st.dataMode,
     companies: st.companies, vps: st.vps, gers: st.gers, itemrels: st.itemrels, items: st.items, cecos: st.cecos, clacos: st.clacos, tcs: st.tcs, clases: st.clases, aps: st.aps, st: st.stMode, hidden: st.hidden,
     groupBy: groupDims, sort: st.sort, overrides, growth,
-  }), [st, showProp, overrides, vpov, cecoNames, valMode, cecoMode]);
+  }), [st, showProp, overrides, vpov, cecoNames, valMode, cecoMode, hideComercial]);
 
   const tree = useMemo(() => A.buildTree(opts), [opts]);
   const series = useMemo(() => A.annualSeries(opts), [opts]);
@@ -2364,13 +2742,13 @@ function App() {
           </button>
           <ColorPanel onApply={onColorApply} edit={editMode} />
         </div>
-        {page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} cecoNames={cecoNames} setCecoNames={setCecoNames} cecoMode={cecoMode} onCecoMode={onCecoMode} />
+        <ErrorBoundary key={page}>{page === 'dict' ? <DictView vpov={vpov} setVpov={setVpov} nameov={nameov} setNameov={setNameov} cecoNames={cecoNames} setCecoNames={setCecoNames} cecoMode={cecoMode} onCecoMode={onCecoMode} />
          : page === 'dotaciones' ? <DotacionesView />
          : page === 'capex' ? <CapexView />
-         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} onDec={v => setTweak('decimals', v)} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} st={st} set={set} thr={thr} />
+         : page === 'resumen' ? <ResumenView overrides={overrides} unit={unit} dec={dec} onDec={v => setTweak('decimals', v)} valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} hideComercial={hideComercial} onHideComercial={onHideComercial} st={st} set={set} thr={thr} />
          : <React.Fragment>
         <FilterBar st={st} set={set} gerOptions={dims.gers} itemrelOptions={dims.itemrels} cecoOptions={dims.cecos} clacoOptions={dims.clacos} tcOptions={dims.tcs} clasOptions={dims.clases} apOptions={dims.aps}
-          valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} />
+          valMode={valMode} cecoMode={cecoMode} onValMode={onValMode} onCecoMode={onCecoMode} hideComercial={hideComercial} onHideComercial={onHideComercial} />
 
         <KpiCards kpis={kpis} unit={unit} />
 
@@ -2508,7 +2886,7 @@ function App() {
           <b>KPI:</b> verde ≤ presupuesto · amarillo hasta {thr.red}% · rojo &gt; {thr.red}% sobre presupuesto · montos en {unit}{showProp ? (companiesActive ? ' · Presupuesto 2027 no editable con filtro de compañía' : ' · Presupuesto 2027 editable a nivel de ítem') : ''}.<br />
           <b>Fuente:</b> Consulta a SAP BPC de valores históricos 2022-2025. <b>Presupuesto 2027:</b> Pendiente.
         </div>
-        </React.Fragment>}
+        </React.Fragment>}</ErrorBoundary>
       </div>
 
       <TweaksPanel>
@@ -2524,4 +2902,4 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);

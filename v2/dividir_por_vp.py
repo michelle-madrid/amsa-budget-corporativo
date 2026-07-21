@@ -93,6 +93,10 @@ VISTAS_COMBINADAS = {
         "vp_gerencias": {"VP Finanzas": {"TICA", "TICA Corporativo"}},
         "sin_vp": True,
     },
+    # El dashboard de VP Exploraciones y Recursos Mineros incluye además la VP "Exploraciones".
+    "VP Exploraciones y Recursos Mineros": {
+        "vps": {"VP Exploraciones y Recursos Mineros", "Exploraciones"},
+    },
 }
 
 

@@ -119,6 +119,7 @@ function FilterBar(props) {
   // Toggles globales (valor Normal/Ajustada 2027 · CECOS nuevos/antiguos).
   const valMode = props.valMode || 'n', cecoMode = props.cecoMode || 'new';
   const onValMode = props.onValMode || (() => {}), onCecoMode = props.onCecoMode || (() => {});
+  const hideComercial = props.hideComercial !== false, onHideComercial = props.onHideComercial || (() => {});
   // Opciones de Ítem Relevante (Agrupación3) y Gerencia según el modo de datos activo.
   const itemrelVals = itemrelOptions || [];
   const itemrelOpts = itemrelVals.map(v => ({ value: v, label: A.dispItemRel(v) }));
@@ -297,6 +298,7 @@ function FilterBar(props) {
           <select value={cecoMode} onChange={e => onCecoMode(e.target.value)} style={{ minWidth: 0, width: '100%' }}>
             <option value="new">Nuevos</option>
             <option value="old">Antiguos</option>
+            <option value="ajustes">Nueva con ajustes</option>
           </select>
         </div>
       </div>
@@ -307,6 +309,14 @@ function FilterBar(props) {
           <ModeChip label="Corporativo" on={corpOn} onClick={() => setFlags(!corpOn, distOn)} />
           <ModeChip label="Distribuible" on={distOn} onClick={() => setFlags(corpOn, !distOn)} />
         </div>
+      </div>
+
+      <div className="fgroup" style={{ minWidth: 130 }}>
+        <div className="fcap">Comercialización</div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, fontSize: 12, fontWeight: 600, color: 'var(--fg-2, #444)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          title="Marcado: oculta el Ítem COMERCIALI (Cód. Agrupación4) en todo el dashboard.">
+          <input type="checkbox" checked={hideComercial} onChange={e => onHideComercial(e.target.checked)} /> Ocultar
+        </label>
       </div>
 
       <div className="fgroup" style={{ minWidth: 150 }}>

@@ -13,7 +13,8 @@
   const DOT = window.DOT_DATA || { records: [] };   // Dotaciones (FTE) — Propios/Contratista
   // Modo de valor ('n' Normal | 'a' Ajustada 2027) y de CECOS ('new' | 'old'),
   // elegibles en la barra de filtros. Al cambiar se reconstruyen los registros.
-  let _valMode = 'n', _cecoMode = 'new';   // Estructura CECOS por defecto: Nueva
+  let _valMode = 'n', _cecoMode = 'ajustes';   // Estructura CECOS por defecto: Nueva con ajustes
+  let _hideComercial = true;   // Filtro «Comercialización»: oculta el Ítem COMERCIALI (Cód_Agrupación4). Por defecto ON.
 
   // ===== Textos editables del dashboard (los edita la herramienta "Editar textos") =====
   const TEXTOS = window.TEXTOS = /*TEXTOS-BEGIN*/{
@@ -178,6 +179,10 @@
         if (other[r.ceco]) { hidden = true; m = other[r.ceco]; }
         else m = { vp: '(sin VP)', ger: '(sin Gerencia)', tc: null, ap: null, cl: '(sin clasificación)', comp: (r.ceco || '').slice(0, 4) };
       }
+      // Reversas (ajuste Forecast): solo cuentan en la Estructura CECOS «Nueva con ajustes».
+      if (r.adj && _cecoMode !== 'ajustes') hidden = true;
+      // Filtro «Comercialización» (global, ON por defecto): oculta el Ítem COMERCIALI (Cód_Agrupación4).
+      if (_hideComercial && r.item === 'COMERCIALI') hidden = true;
       const src = _srcOf(m.comp);
       const comp = src === 'dist' ? _abrev(m.comp) : null;
       const y = o => ({ real: _pick(o && o.real), plan: _pick(o && o.plan) });
@@ -199,6 +204,7 @@
         hist: { 2022: y(r.y2022), 2023: y(r.y2023), 2024: y(r.y2024), 2025: y(r.y2025), 2026: y(r.y2026) },
         fy26: _pick(r.y2026fy && r.y2026fy.plan),
         fcst: _pick(r.fcst),   // Forecast 5+7 2026 (anual) — 0 salvo en registros "(Forecast)"
+        out66: _pick(r.out66), // Outlook 6+6 2026 (anual) — 0 salvo en registros "(Outlook)"
         prop27: r.prop27 || 0, // Ppto 2027 (anual, valor tal cual) — 0 salvo en "(Ppto2027)"
         _realNA: { 2022: na(r.y2022 && r.y2022.real), 2023: na(r.y2023 && r.y2023.real), 2024: na(r.y2024 && r.y2024.real), 2025: na(r.y2025 && r.y2025.real), 2026: na(r.y2026 && r.y2026.real) },
         _planNA: { 2022: na(r.y2022 && r.y2022.plan), 2023: na(r.y2023 && r.y2023.plan), 2024: na(r.y2024 && r.y2024.plan), 2025: na(r.y2025 && r.y2025.plan), 2026: na(r.y2026 && r.y2026.plan) },
@@ -243,7 +249,8 @@
     rebuildDict();
   }
   function setValMode(m) { if ((m === 'n' || m === 'a') && m !== _valMode) { _valMode = m; rebuild(); } }
-  function setCecoMode(m) { if ((m === 'new' || m === 'old') && m !== _cecoMode) { _cecoMode = m; rebuild(); } }
+  function setCecoMode(m) { if ((m === 'new' || m === 'old' || m === 'ajustes') && m !== _cecoMode) { _cecoMode = m; rebuild(); } }
+  function setHideComercial(b) { b = !!b; if (b !== _hideComercial) { _hideComercial = b; rebuild(); } }   // filtro «Comercialización»
   rebuild();  // init
 
   // Conjunto activo según modo de datos. Gasto: corp | dist | both (+ compañías).
@@ -408,13 +415,14 @@
     }
     return false;
   }
-  function _detpZero() { return { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, prop: 0, yr: {}, _sort: 0 }; }
+  function _detpZero() { return { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, out66: 0, prop: 0, yr: {}, _sort: 0 }; }
   function _detpAdd(agg, meas, v) {
     if (meas === 0) { (agg.yr[2025] || (agg.yr[2025] = { real: 0, ver: 0 })).ver += v; }
     else if (meas === 1) { (agg.yr[2026] || (agg.yr[2026] = { real: 0, ver: 0 })).ver += v; }
     else if (meas === 2) { agg.fy26 += v; }
     else if (meas === 3) { agg.fcst += v; }
     else if (meas === 4) { agg.prop += v; }
+    else if (meas === 5) { agg.out66 += v; }   // Outlook 6+6 2026
     agg._sort += v;
   }
   function detailMatchP(ctx, q) {
@@ -554,7 +562,7 @@
         ver += rec.fy26 || 0;
         if (byYear) yr['2026fy'] = { real: 0, ver: rec.fy26 || 0 };
       }
-      const m = { real, version: ver, ytdReal: real, ytdVersion: ver, fy26: rec.fy26 || 0, fcst: rec.fcst || 0 };
+      const m = { real, version: ver, ytdReal: real, ytdVersion: ver, fy26: rec.fy26 || 0, fcst: rec.fcst || 0, out66: rec.out66 || 0 };
       // Ppto 2027 = valor cargado del Excel (rec.prop27); un override editado tiene prioridad.
       if (showProp) m.prop = (opts.overrides && opts.overrides[rec.id] != null) ? opts.overrides[rec.id] : (rec.prop27 || 0);
       if (byYear) m.yr = yr;
@@ -562,8 +570,8 @@
     }
     const zero = () => {
       const z = showProp
-        ? { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, prop: 0 }
-        : { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0 };
+        ? { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, out66: 0, prop: 0 }
+        : { real: 0, version: 0, ytdReal: 0, ytdVersion: 0, fy26: 0, fcst: 0, out66: 0 };
       if (byYear) z.yr = {};
       return z;
     };
@@ -868,6 +876,7 @@
     hasST: () => records.some(r => r.st),   // ¿hay registros Services & Tech? (para mostrar el filtro)
     fmt, fmtPct, dispVP, dispGer, dispItem, dispItemRel, dispClaco, itemCode, applyNameOverrides, baseGer, baseItem,
     setValMode, setCecoMode, getValMode: () => _valMode, getCecoMode: () => _cecoMode,
+    setHideComercial, getHideComercial: () => _hideComercial,
     recordById: (id) => records[id],
     derived, DEF_GROWTH, GER_ALIAS,
   };

@@ -66,7 +66,7 @@ DIC = os.path.join(UP, "diccionario")
 REAL_FILE = os.path.join(UP, "Reales Históricos v2.xlsx")
 DIST_REAL_FILE = os.path.join(UP, "Reales Distribuibles Histórico v2.xlsx")
 BUD_FILE = os.path.join(UP, "Planes Históricos v2.xlsx")
-FCST_FILE = os.path.join(UP, "EXPORT_FORECAST_5+7 2026.xlsx")
+FCST_FILE = os.path.join(UP, "ejercicios_2026", "Forecast 5+7 2026.XLSX")
 DOT_FILE = os.path.join(UP, "Dotaciones Histórico AMSA.xlsx")
 CECOS_FILE = os.path.join(DIC, "CECOS.xlsx")
 CLACOS_FILE = os.path.join(DIC, "CLACOS.xlsx")
@@ -85,7 +85,19 @@ FCST_SHEET = "Forecast 5+7 Unpivot"
 # Forecast 5+7 2026 (hoja Unpivot): CECO=2 · Clase Costo(CLACO)=4 · Valor=15 · Valor USD 2027=16
 FC_CECO, FC_CLACO, FC_VALN, FC_VALA = 2, 4, 15, 16
 FC_CG, FC_ACT = 8, 9   # Forecast: Concepto Gasto (col8) · Actividad (col9)
-PPTO27_FILE = os.path.join(UP, "PPTO27_15_07_2026_15_30.XLSX")
+# Outlook 6+6 2026: otro ejercicio del mismo tipo. Su hoja Unpivot (generada con
+# v2/unpivot_ejercicio.py) tiene EXACTAMENTE el mismo layout que la del Forecast,
+# así que reutiliza los índices FC_*. Se muestra como una columna más de la
+# categoría "Forecast" (no reemplaza al 5+7).
+OUT_FILE = os.path.join(UP, "ejercicios_2026", "Outlook 6+6 2026.XLSX")
+OUT_SHEET = "Outlook 6+6 Unpivot"
+# Reversas (ajustes al Forecast 5+7): filas extra que SOLO se aplican con la Estructura CECOS
+# «Nueva con ajustes» (cecoMode='ajustes'). Mismo layout Unpivot que el Forecast → reusan FC_*.
+# El resto del tiempo el modelo las oculta. Suelen ser redistribuciones (neto ≈ 0).
+# AUTO-DESCUBRIMIENTO: cada .xlsx dejado en esta carpeta que tenga una hoja «… Unpivot» se suma
+# automáticamente (no hay que editar código). Genera la hoja con: python v2/unpivot_ejercicio.py.
+REV_DIR = os.path.join(UP, "ajustes_forecast")
+PPTO27_FILE = os.path.join(UP, "presupuesto_2027", "PPTO27_21_07_2026_17_00.XLSX")
 PPTO27_SHEET = "Sheet1"
 # CAPEX 2027 (hoja "BD AMSA"): base para la pestaña CAPEX. Header en 2 filas, datos desde la 3.
 CAPEX_FILE = os.path.join(UP, "capex", "Presupuesto CAPEX AMSA 2027 v2.xlsx")
@@ -120,6 +132,20 @@ B_ANIO, B_CECO, B_CLACO, B_CG, B_ACT, B_MESANIO, B_VALN, B_VALA = 0, 1, 3, 5, 6,
 # Cada registro afectado se marca con el flag st=1 (parte de la clave de agregación) para
 # poder filtrarlo sin cambiar la jerarquía de Ítem. ST_NAMES se arma en leer_clacos().
 ST_CODES = {"6125020", "6125021"}
+
+# --- Renombrado fijo de CLACO dentro de un CECO (regla de negocio) -----------
+# {(ceco, claco_origen): claco_destino}. Se aplica SIEMPRE, en TODAS las fuentes (Real, Ppto,
+# Forecast, Outlook, Reversas, Ppto2027 y su detalle), tras leer (ceco, claco) y ANTES de cruzar
+# a Ítem y de guardar el CLACO. El ítem sigue al CLACO destino (en el Real se recalcula por código).
+# Ej.: en 1002AD4503 la Liquidación 8200001 (Ítem Secundarias) pertenece a 6124407 (Servicios);
+# al renombrarla, ambos quedan bajo 6124407 y se netean.
+CLACO_REMAP = {
+    ("1002AD4503", "8200001"): "6124407",
+}
+
+
+def _remap_claco(ceco, claco):
+    return CLACO_REMAP.get((ceco, claco), claco)
 
 
 def log(m):
@@ -267,7 +293,7 @@ def _agg_new():
     return collections.defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
 
 
-def _leer_real_fuente(path, cols, name2ag, agg, realcecos, sin_item, name2claco):
+def _leer_real_fuente(path, cols, name2ag, agg, realcecos, sin_item, name2claco, code2item):
     """Lee una hoja 'Data Consolidada' de Reales (corp o distribuibles) y acumula en agg (in-place)."""
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     it = wb[REAL_SHEET].iter_rows(values_only=True)
@@ -285,6 +311,10 @@ def _leer_real_fuente(path, cols, name2ag, agg, realcecos, sin_item, name2claco)
         if item == "(sin ítem)":
             sin_item[nm] += 1
         claco = name2claco.get(nm) or "(sin claco)"   # Clase de Costo por NOMBRE (Real cruza por nombre)
+        rc = _remap_claco(ceco, claco)                # regla fija de renombrado de CLACO por CECO
+        if rc != claco:
+            claco = rc
+            item = code2item.get(claco, item)         # el ítem sigue al CLACO destino (por código)
         contra = _txt(r[cols["contra"]]) or "(sin contrapartida)"   # Denom.cuenta contrapartida (solo Real)
         vn = _num(r[cols["valn"]]); va = _num(r[cols["vala"]])
         if anio in YEARS_HIST:
@@ -302,13 +332,13 @@ def _leer_real_fuente(path, cols, name2ag, agg, realcecos, sin_item, name2claco)
     return n
 
 
-def leer_reales(name2ag, name2claco):
+def leer_reales(name2ag, name2claco, code2item):
     agg = _agg_new()
     realcecos = set()   # CECOs con Real = universo en alcance (Corp + Distribuibles)
     sin_item = collections.Counter()
-    nc = _leer_real_fuente(REAL_FILE, COLS_CORP, name2ag, agg, realcecos, sin_item, name2claco)
+    nc = _leer_real_fuente(REAL_FILE, COLS_CORP, name2ag, agg, realcecos, sin_item, name2claco, code2item)
     cecos_corp = len(realcecos)
-    nd = _leer_real_fuente(DIST_REAL_FILE, COLS_DIST, name2ag, agg, realcecos, sin_item, name2claco)
+    nd = _leer_real_fuente(DIST_REAL_FILE, COLS_DIST, name2ag, agg, realcecos, sin_item, name2claco, code2item)
     log(f"  Reales: Corp {nc} filas ({cecos_corp} CECOs) + Distribuibles {nd} filas ({len(realcecos) - cecos_corp} CECOs)")
     log(f"          {len(realcecos)} CECOs con Real · sin ítem: {sum(sin_item.values())} filas / {len(sin_item)} nombres")
     return agg, realcecos
@@ -326,7 +356,7 @@ DET_COLS_DIST = {"ceco": 1, "desc": 4, "contra": 6, "texto": 3, "denom": 8, "doc
 BUCKET_IDX = {y: i for i, y in enumerate(YEARS_HIST)}   # 2022→0 … 2025→3 · 2026ytd→4
 
 
-def leer_detalle(name2ag, en_alcance, st_names):
+def leer_detalle(name2ag, en_alcance, st_names, name2claco, code2item):
     """Detalle línea-a-línea de los Reales (corp+dist) para v3. Devuelve un blob compacto
     {s:[strings únicos], k:{'item\\x01contra': [[cecoIdx,textoIdx,denomIdx,docIdx,bk,n,a,st], …]}}.
     Agrega por (item,contra,ceco,texto,denom,doc,bucket,st) e interna strings para pesar poco.
@@ -352,6 +382,9 @@ def leer_detalle(name2ag, en_alcance, st_names):
                 continue
             nm = _txt(r[C["desc"]]).lower()
             item = name2ag.get(nm) or "(sin ítem)"
+            _cl = name2claco.get(nm)                       # regla fija de renombrado de CLACO por CECO
+            if _cl and _remap_claco(ceco, _cl) != _cl:     # si el CLACO se renombra, el ítem lo sigue
+                item = code2item.get(_remap_claco(ceco, _cl), item)
             st = 1 if nm in st_names else 0
             contra = _txt(r[C["contra"]]) or "(sin contrapartida)"
             texto = _txt(r[C["texto"]]) or "(sin texto de pedido)"
@@ -384,6 +417,7 @@ def leer_detalle(name2ag, en_alcance, st_names):
 
 # Medidas del detalle Ppto/Forecast (Concepto Gasto › Actividad). Cada línea lleva su medida:
 #   0 Ppto 2025 · 1 Ppto 2026 YTD · 2 Ppto 2026 FY · 3 Forecast 5+7 2026 · 4 Ppto 2027
+#   5 Outlook 6+6 2026
 def leer_detalle_pf(code2ag, en_alcance):
     """Detalle Concepto Gasto › Actividad para Ppto (Budget 2025-2026), Forecast y Ppto 2027.
     (El Ppto histórico 2022-2024 no trae Concepto/Actividad, así que no entra.) Cruza por CÓDIGO.
@@ -412,7 +446,7 @@ def leer_detalle_pf(code2ag, en_alcance):
             continue
         if anio not in (2025, 2026):
             continue
-        item = code2ag.get(_txt(r[B_CLACO])) or "(sin ítem)"
+        item = code2ag.get(_remap_claco(ceco, _txt(r[B_CLACO]))) or "(sin ítem)"
         cg = _txt(r[B_CG]) or "(sin concepto)"; act = _txt(r[B_ACT]) or "(sin actividad)"
         vn = _num(r[B_VALN]); va = _num(r[B_VALA])
         if anio == 2025:
@@ -430,9 +464,22 @@ def leer_detalle_pf(code2ag, en_alcance):
             ceco = _txt(r[FC_CECO])
             if not ceco or not en_alcance(ceco):
                 continue
-            item = code2ag.get(_txt(r[FC_CLACO])) or "(sin ítem)"
+            item = code2ag.get(_remap_claco(ceco, _txt(r[FC_CLACO]))) or "(sin ítem)"
             cg = _txt(r[FC_CG]) or "(sin concepto)"; act = _txt(r[FC_ACT]) or "(sin actividad)"
             add(item, ceco, cg, act, 3, _num(r[FC_VALN]), _num(r[FC_VALA]))
+        wb.close()
+    # Outlook 6+6 2026 (medida 5) — mismo layout de hoja que el Forecast
+    if os.path.isfile(OUT_FILE):
+        wb = openpyxl.load_workbook(OUT_FILE, data_only=True, read_only=True)
+        if OUT_SHEET in wb.sheetnames:
+            it = wb[OUT_SHEET].iter_rows(values_only=True); next(it)
+            for r in it:
+                ceco = _txt(r[FC_CECO])
+                if not ceco or not en_alcance(ceco):
+                    continue
+                item = code2ag.get(_remap_claco(ceco, _txt(r[FC_CLACO]))) or "(sin ítem)"
+                cg = _txt(r[FC_CG]) or "(sin concepto)"; act = _txt(r[FC_ACT]) or "(sin actividad)"
+                add(item, ceco, cg, act, 5, _num(r[FC_VALN]), _num(r[FC_VALA]))
         wb.close()
     # Ppto 2027 (valor tal cual; original = ajustada)
     if os.path.isfile(PPTO27_FILE):
@@ -442,7 +489,7 @@ def leer_detalle_pf(code2ag, en_alcance):
             ceco = _txt(r[P27_CECO])
             if not ceco or not en_alcance(ceco):
                 continue
-            item = code2ag.get(_txt(r[P27_CLACO])) or "(sin ítem)"
+            item = code2ag.get(_remap_claco(ceco, _txt(r[P27_CLACO]))) or "(sin ítem)"
             cg = _txt(r[P27_CG]) or "(sin concepto)"; act = _txt(r[P27_ACT]) or "(sin actividad)"
             v = _num(r[P27_TOTAL]); add(item, ceco, cg, act, 4, v, v)
         wb.close()
@@ -474,7 +521,7 @@ def leer_planes(code2ag, agg):
             anio = int(_txt(r[B_ANIO]))
         except ValueError:
             continue
-        claco = _txt(r[B_CLACO])
+        claco = _remap_claco(ceco, _txt(r[B_CLACO]))   # regla fija de renombrado de CLACO por CECO
         item = code2ag.get(claco) or "(sin ítem)"
         if item == "(sin ítem)":
             sin_item[claco] += 1
@@ -495,20 +542,27 @@ def leer_planes(code2ag, agg):
     return agg
 
 
-def leer_forecast(code2ag, en_alcance):
-    """Forecast 5+7 2026 (anual) agregado por (ceco, item, claco) con valor Normal y Ajustado 2027.
+def leer_forecast(code2ag, en_alcance, path=None, sheet=None, etiqueta="Forecast 5+7"):
+    """Ejercicio anual (Forecast 5+7 / Outlook 6+6) agregado por (ceco, item, claco) con valor
+    Normal y Ajustado 2027. Ambos usan la misma hoja Unpivot y los mismos índices FC_*.
     Cruza CLACO (Clase Costo) → Ítem por CÓDIGO. Devuelve {(ceco,item,claco): [n, a]}."""
-    if not os.path.isfile(FCST_FILE):
-        log("  AVISO: no está el archivo de Forecast; se omite.")
+    path = path or FCST_FILE
+    sheet = sheet or FCST_SHEET
+    if not os.path.isfile(path):
+        log(f"  AVISO: no está el archivo de {etiqueta}; se omite.")
         return {}
-    wb = openpyxl.load_workbook(FCST_FILE, data_only=True, read_only=True)
-    it = wb[FCST_SHEET].iter_rows(values_only=True); next(it)
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    if sheet not in wb.sheetnames:
+        log(f"  AVISO: {os.path.basename(path)} no tiene la hoja «{sheet}»; se omite {etiqueta}.")
+        wb.close()
+        return {}
+    it = wb[sheet].iter_rows(values_only=True); next(it)
     agg = {}; n = 0; sin_item = collections.Counter()
     for r in it:
         ceco = _txt(r[FC_CECO])
         if not ceco or not en_alcance(ceco):
             continue
-        claco = _txt(r[FC_CLACO])
+        claco = _remap_claco(ceco, _txt(r[FC_CLACO]))   # regla fija de renombrado de CLACO por CECO
         item = code2ag.get(claco) or "(sin ítem)"
         if item == "(sin ítem)":
             sin_item[claco] += 1
@@ -522,7 +576,7 @@ def leer_forecast(code2ag, en_alcance):
             agg[k] = [vn, va]
         n += 1
     wb.close()
-    log(f"  Forecast 5+7: {n} filas → {len(agg)} (ceco,item) · sin ítem (CLACO no cruza): {sum(sin_item.values())} filas / {len(sin_item)} CLACOs")
+    log(f"  {etiqueta}: {n} filas → {len(agg)} (ceco,item) · sin ítem (CLACO no cruza): {sum(sin_item.values())} filas / {len(sin_item)} CLACOs")
     return agg
 
 
@@ -539,7 +593,7 @@ def leer_ppto27(code2ag, en_alcance):
         ceco = _txt(r[P27_CECO])
         if not ceco or not en_alcance(ceco):
             continue
-        claco = _txt(r[P27_CLACO])
+        claco = _remap_claco(ceco, _txt(r[P27_CLACO]))   # regla fija de renombrado de CLACO por CECO
         item = code2ag.get(claco) or "(sin ítem)"
         if item == "(sin ítem)":
             sin_item[claco] += 1
@@ -992,6 +1046,26 @@ def leer_capex():
         tot = round(_num(r[39]), 2)
         if tot == 0:
             tot = round(sum(months), 2)
+        fcst = round(_num(r[26]), 2)   # Forecast 5+7 2026 = Acumulado Dic 2026 (F5+7), en USD
+        # AVANCE FÍSICO (% acumulado): col 45 = al cierre Dic-26 · cols 46..57 = F Ene-27..F Dic-27.
+        # Es un % ACUMULADO por hito (meses sin dato = mismo valor del hito anterior → arrastre).
+        def _pct(v):
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+        f0 = _pct(r[45]) if len(r) > 45 else None
+        _fm = [(_pct(r[46 + i]) if len(r) > 46 + i else None) for i in range(12)]
+        any_f = (f0 is not None) or any(v is not None for v in _fm)
+        # Curva COMPLETA (12 meses, sin huecos) para que la agregación ponderada tenga denominador
+        # fijo → % monótono. Meses previos al primer hito = baseline Dic-26 (o 0 si no hay baseline).
+        # Máximo corrido: el % ACUMULADO no puede bajar (si el origen reporta un valor menor
+        # —re-scope o error de carga— se mantiene el hito más alto ya alcanzado).
+        f_curve, last = [], (f0 if f0 is not None else 0.0)
+        for i in range(12):
+            if _fm[i] is not None and _fm[i] > last:
+                last = _fm[i]
+            f_curve.append(round(last, 4))
         rows.append({
             "sd":   _txt(r[5], "(sin categoría)"),   # Sostenimiento / Desarrollo (Sustaining/Development/TMM)
             "vp":   _txt(r[11]),                       # Vicepresidencia
@@ -1003,6 +1077,9 @@ def leer_capex():
             "est":  _est(r[6]),                        # Estatus
             "m":    months,                            # $ Ene-27 .. $ Dic-27 (USD)
             "tot":  tot,                               # Total 2027 (USD)
+            "fcst": fcst,                              # Forecast 5+7 2026 = Acumulado Dic 2026 (USD)
+            "f":    (f_curve if any_f else None),      # Avance físico % acumulado por mes (o null si el proyecto no reporta)
+            "f0":   (round(f0, 4) if f0 is not None else None),   # Avance físico % al cierre Dic-26 (punto de partida)
         })
     log(f"  CAPEX: {len(rows)} proyectos · Total 2027 {sum(x['tot'] for x in rows)/1e6:.1f} MM USD")
     return {"months": MESES, "rows": rows}
@@ -1157,6 +1234,31 @@ def escribir_bbdd(agg, fcst, ppto27, det, detp, cecoNew, cecoOld, comps,
     log(f"  BBDD (esquema estrella) escrita en {BBDD_DIR} · {len(_BBDD_TABLAS)} tablas + LEEME.txt")
 
 
+def _reversas_files():
+    """Descubre los ajustes de reversas: cada .xlsx en REV_DIR que tenga una hoja cuyo nombre
+    termina en «Unpivot». Devuelve [(path, hoja, etiqueta), …] ordenado por nombre de archivo.
+    Así, agregar un ajuste al Forecast = dejar el Excel ahí con su hoja «… Unpivot» (sin tocar código)."""
+    out = []
+    if not os.path.isdir(REV_DIR):
+        return out
+    for fn in sorted(os.listdir(REV_DIR)):
+        if fn.startswith("~$") or not fn.lower().endswith((".xlsx", ".xlsm")):
+            continue
+        path = os.path.join(REV_DIR, fn)
+        try:
+            wb = openpyxl.load_workbook(path, read_only=True)
+            hoja = next((s for s in wb.sheetnames if s.strip().lower().endswith("unpivot")), None)
+            wb.close()
+        except Exception as e:
+            log(f"  AVISO: no pude abrir {fn} ({type(e).__name__}); se omite.")
+            hoja = None
+        if hoja:
+            out.append((path, hoja, os.path.splitext(fn)[0]))
+        else:
+            log(f"  AVISO: {fn} no tiene hoja «… Unpivot»; se omite (¿corriste unpivot_ejercicio.py?).")
+    return out
+
+
 # ===========================================================================
 def main(solo_v3=False):
     # solo_v3=True: regenera ÚNICAMENTE el v3 (re-embebe en memoria el código actual de src/ +
@@ -1172,7 +1274,7 @@ def main(solo_v3=False):
     log(f"  Services & Tech: códigos {sorted(ST_CODES)} · nombres Real (Agrupación5): {sorted(st_names)}")
 
     log("Leyendo Reales…")
-    agg, realcecos = leer_reales(name2item, name2claco)
+    agg, realcecos = leer_reales(name2item, name2claco, code2item)
     log("Leyendo Planes…")
     agg = leer_planes(code2item, agg)
 
@@ -1204,6 +1306,44 @@ def main(solo_v3=False):
         rec["y2026fy"] = {"plan": {"n": 0, "a": 0}}
         rec["fcst"] = {"n": _round(vn), "a": _round(va)}
         records.append(rec)
+
+    # Outlook 6+6 2026 (anual): idéntico al Forecast 5+7 pero en su propia medida 'out66',
+    # con contra "(Outlook)". Es una columna MÁS de la categoría Forecast (no lo reemplaza).
+    log("Leyendo Outlook 6+6…")
+    out66 = leer_forecast(code2item, _en_alcance, OUT_FILE, OUT_SHEET, "Outlook 6+6")
+    for (ceco, item, claco), (vn, va) in out66.items():
+        rec = {"ceco": ceco, "item": item, "contra": "(Outlook)"}
+        if claco and claco != "(sin claco)":
+            rec["claco"] = claco
+        if claco in ST_CODES:
+            rec["st"] = 1
+        for y in YEARS_HIST:
+            rec[f"y{y}"] = ZERO()
+        rec["y2026"] = ZERO()
+        rec["y2026fy"] = {"plan": {"n": 0, "a": 0}}
+        rec["out66"] = {"n": _round(vn), "a": _round(va)}
+        records.append(rec)
+
+    # Reversas (ajustes al Forecast 5+7): pseudo-registros con contra "(Forecast)" y flag adj=1.
+    # Se SUMAN al Forecast 5+7 SOLO cuando la Estructura CECOS activa es «Nueva con ajustes»
+    # (el modelo los oculta en los demás modos). Suelen ser redistribuciones (neto ≈ 0) que
+    # cambian el reparto por VP/Gerencia/Ítem sin mover el gran total. AUTO-DESCUBIERTAS: cada
+    # .xlsx en ajustes_forecast con una hoja «… Unpivot» se suma (no requiere editar código).
+    log("Leyendo Reversas (ajustes al Forecast)…")
+    for _rev_path, _rev_sheet, _rev_lbl in _reversas_files():
+        rev = leer_forecast(code2item, _en_alcance, _rev_path, _rev_sheet, "Reversas·" + _rev_lbl[:26])
+        for (ceco, item, claco), (vn, va) in rev.items():
+            rec = {"ceco": ceco, "item": item, "contra": "(Forecast)", "adj": 1}
+            if claco and claco != "(sin claco)":
+                rec["claco"] = claco
+            if claco in ST_CODES:
+                rec["st"] = 1
+            for y in YEARS_HIST:
+                rec[f"y{y}"] = ZERO()
+            rec["y2026"] = ZERO()
+            rec["y2026fy"] = {"plan": {"n": 0, "a": 0}}
+            rec["fcst"] = {"n": _round(vn), "a": _round(va)}
+            records.append(rec)
 
     # Ppto 2027 (anual, valor tal cual): pseudo-registros con contra "(Ppto2027)" que solo
     # aportan 'prop27'. Alimenta la columna/comparación "Ppto 2027" (antes Propuesta, base 0).
@@ -1263,7 +1403,7 @@ def main(solo_v3=False):
     # v3 = misma app + DETALLE del gasto embebido: Real (Contrapartida › Texto pedido ›
     # Denominación) y Ppto/Forecast (Concepto Gasto › Actividad).
     log("Construyendo detalle v3…")
-    det = leer_detalle(name2item, _en_alcance, st_names)
+    det = leer_detalle(name2item, _en_alcance, st_names, name2claco, code2item)
     detp = leer_detalle_pf(code2item, _en_alcance)
     capex = leer_capex()
     construir_v3(base_html, data_js, det, detp, capex)
