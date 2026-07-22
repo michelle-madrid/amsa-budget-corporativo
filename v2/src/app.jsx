@@ -522,7 +522,6 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const [formato, setFormato] = React.useState('comp');   // 'comp' | 'pres' — Comparador (tabla-árbol) / Presentación (resumen ejecutivo por Ítem Relevante)
   const [ahorros, setAhorros] = React.useState({});       // Presentación: «Ahorros comprometidos» (ajuste manual, {colKey: USD})
   const [presExpanded, setPresExpanded] = React.useState(new Set());   // Presentación (modo VP): Gerencias expandidas → Ítem Relevante
-  const [presInfoOpen, setPresInfoOpen] = React.useState(false);       // Presentación: popover «cómo se calcula la % Dif»
   const [optsOpen, setOptsOpen] = React.useState(false);  // popover "Opciones de tabla" (formato puro: unidad, decimales, Dif/%)
   const optsRef = React.useRef(null);
   const [expanded, setExpanded] = React.useState(() => new Set());
@@ -564,7 +563,16 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const topScrollRef = React.useRef(null); // barrita de scroll arriba
   const syncing = React.useRef(false);
   const [tblW, setTblW] = React.useState(0); // ancho real (scrollWidth) de la tabla
-  React.useLayoutEffect(() => { const el = tblWrapRef.current; if (el) setTblW(el.scrollWidth); });
+  const tblWHist = React.useRef([]); // anti-oscilación: últimos anchos aplicados (evita bucle medición↔layout → «Maximum update depth»)
+  React.useLayoutEffect(() => {
+    const el = tblWrapRef.current; if (!el) return;
+    const w = el.scrollWidth;
+    if (w === tblW) return;                                 // sin cambio real → no re-render
+    const h = tblWHist.current;
+    if (h.includes(w)) return;                              // ya estuvimos en este ancho hace poco → ciclo (barra de scroll) → congelar
+    h.push(w); if (h.length > 4) h.shift();
+    setTblW(w);
+  });
   React.useEffect(() => {
     const upd = () => { const el = tblWrapRef.current; if (el) setTblW(el.scrollWidth); };
     window.addEventListener('resize', upd);
@@ -579,18 +587,29 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     return () => document.removeEventListener('mousedown', f);
   }, [moreOpen]);
   const N_COLLAPSIBLE = 9; // VP, Gerencia, Ítem Relevante, Código CECO, Código CLACO, Tipo Costo, Clasif Cuenta, ¿Aplica? (van al "+")
+  const nHiddenHist = React.useRef([]); // anti-oscilación: últimos nHidden aplicados (evita bucle colapsar↔expandir)
+  const lastBarW = React.useRef(0);     // ancho de barra en la última medición (para reiniciar el guardia al redimensionar)
   React.useLayoutEffect(() => {
     const el = barRef.current;
     if (!el) return;
+    // Aplica un nuevo nHidden solo si cambia y no reincide en un valor reciente (ping-pong).
+    const applyNHidden = (next) => {
+      if (next === nHidden) return;
+      const h = nHiddenHist.current;
+      if (h.includes(next)) return;                          // ya aplicamos este nHidden en esta medición → oscilación → detener
+      h.push(next); if (h.length > 4) h.shift();
+      setNHidden(next);
+    };
     const measure = () => {
       // La barra envuelve (no encoge): detectamos salto de fila por la ALTURA total.
       // Si la barra es más alta que un solo control + padding, hay 2+ filas → colapsar.
+      if (el.clientWidth !== lastBarW.current) { lastBarW.current = el.clientWidth; nHiddenHist.current = []; } // resize real → reinicia guardia
       const maxH = Array.from(el.children).reduce((m, k) => Math.max(m, k.offsetHeight), 0);
       const wrapped = el.clientHeight > maxH + 36; // padding 28 + tolerancia
       if (wrapped && nHidden < N_COLLAPSIBLE) {
-        collapseW.current = el.clientWidth; setNHidden(n => Math.min(N_COLLAPSIBLE, n + 1));
+        collapseW.current = el.clientWidth; applyNHidden(Math.min(N_COLLAPSIBLE, nHidden + 1));
       } else if (!wrapped && nHidden > 0 && el.clientWidth > collapseW.current + 150) {
-        setNHidden(n => Math.max(0, n - 1));
+        applyNHidden(Math.max(0, nHidden - 1));
       }
     };
     measure();
@@ -681,7 +700,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const v = valOf(c, node);
     if (kind === 'val') return v;
     const bv = baseCol ? valOf(baseCol, node) : 0;
-    const dif = v - bv;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
+    const dif = bv - v;   // Dif = Base − Comparación (positiva si la comparación es menor que la base)
     if (kind === 'dif') return dif;
     return v ? dif / Math.abs(v) : NaN;   // % Dif = Dif / período; indefinido si período=0
   };
@@ -921,7 +940,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         if (off || baseOff) { out.push(dashTd(c.key + '_d')); out.push(dashTd(c.key + '_p')); }
         else {
           const v = valOf(c, node);
-          const dif = v - baseVal;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
+          const dif = baseVal - v;   // Dif = Base − Comparación (positiva si la comparación es menor que la base)
           const pct = v ? dif / Math.abs(v) : null;   // % Dif = Dif / período (desviación de la base vs ese período)
           out.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right' }}>{(dif > 0 ? '+' : '') + A.fmt(dif, viewUnit, dec)}</td>);
           out.push(<td key={c.key + '_p'} className="tnum pct" style={{ textAlign: 'right' }}>{pct == null ? '—' : (pct > 0 ? '+' : '') + A.fmtPct(pct, 1)}</td>);
@@ -938,7 +957,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     if (!pres) return <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>;
     const UF = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;   // factor de la unidad en pantalla
     const unitLbl = viewUnit === 'kUSD' ? 'kUSD' : viewUnit === 'USD' ? 'USD' : 'MM USD';
-    const semHexP = v => (v > thr.red ? '#DC3545' : v <= 0 ? '#1F9D57' : '#E0A800');   // ● semáforo (v = %Dif×100)
+    const semHexP = v => (v < -thr.red ? '#DC3545' : v >= 0 ? '#1F9D57' : '#E0A800');   // ● semáforo (v = %Dif×100; verde = bajo/igual base)
     const isBase = c => baseCol && c.key === baseCol.key;
     const vAt = (c, agg, add) => (agg ? valOf(c, { agg }) : 0) + ((add && add[c.key]) || 0);
     const ncols = 1 + cols.reduce((n, c) => n + 1 + (baseCol && !isBase(c) ? 2 : 0), 0);
@@ -956,7 +975,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         const v = vAt(c, agg, add);
         tds.push(<td key={c.key} className="tnum" style={{ textAlign: 'right', padding: '7px 12px', ...cs }}>{A.fmt(v, viewUnit, dec)}</td>);
         if (baseCol && !isBase(c)) {
-          const dif = v - bv;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
+          const dif = bv - v;   // Dif = Base − Comparación (positiva si la comparación es menor que la base)
           const pct = v ? dif / Math.abs(v) : null;
           const pv = pct == null ? null : pct * 100;
           tds.push(<td key={c.key + '_d'} className="tnum" style={{ textAlign: 'right', padding: '7px 12px', ...cs }}>{A.fmt(dif, viewUnit, dec)}</td>);
@@ -1018,24 +1037,6 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const semDot = c => <span style={{ color: c, fontSize: 13 }}>●</span>;
     return (
       <div style={{ padding: '4px 2px 10px', overflowX: 'auto' }}>
-        {/* Botón de info: explica cómo se calculan Dif y % Dif. */}
-        <div style={{ position: 'relative', marginBottom: 8 }}>
-          <button type="button" onClick={() => setPresInfoOpen(o => !o)} title="Cómo se calculan la Diferencia y la % Dif"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--teal-border)', background: presInfoOpen ? 'var(--teal-wash)' : '#fff', color: 'var(--amsa-teal-deep)', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: '50%', background: 'var(--amsa-teal)', color: '#fff', fontSize: 10.5, fontWeight: 800, fontStyle: 'italic' }}>i</span>
-            ¿Cómo se calcula la Diferencia?
-          </button>
-          {presInfoOpen && (
-            <div style={{ position: 'absolute', zIndex: 60, top: 'calc(100% + 4px)', left: 0, width: 460, maxWidth: 'calc(100vw - 40px)', background: '#fff', border: '1px solid var(--teal-border)', borderRadius: 8, boxShadow: 'var(--shadow-2)', padding: '12px 14px', fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5 }}>
-              <div style={{ marginBottom: 8 }}><b>Diferencia (Dif) = Comparación − Base</b><br />
-                <span style={{ color: 'var(--fg-muted)' }}>Es la resta de cada columna comparada menos la columna base. Si la comparación es <b>menor</b> que la base, la Dif es <b>negativa</b>; si es mayor, positiva.</span></div>
-              <div style={{ marginBottom: 8 }}><b>Diferencia Porcentual (% Dif) = Dif ÷ |Comparación| × 100</b><br />
-                <span style={{ color: 'var(--fg-muted)' }}>La Dif expresada como porcentaje del valor comparado (en valor absoluto). Conserva el signo de la Dif.</span></div>
-              <div style={{ marginBottom: 8 }}>Semáforo en % Dif: {semDot('#1F9D57')} Comparación ≤ Base · {semDot('#E0A800')} supera la Base hasta {thr.red}% · {semDot('#DC3545')} supera la Base en más de {thr.red}%.</div>
-              <div style={{ fontSize: 11, color: 'var(--fg-muted)', background: 'var(--teal-wash)', borderRadius: 6, padding: '7px 9px' }}>Ejemplo — Base (Ppto 2027) = 100 · Comparación (Real) = 90 → <b>Dif = 90 − 100 = −10</b> · <b>% Dif = −10 ÷ 90 = −11%</b> {semDot('#1F9D57')} (por debajo de la base).</div>
-            </div>
-          )}
-        </div>
         <table className="mtable" style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
           <thead>
             <tr>
@@ -1072,7 +1073,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           </tbody>
         </table>
         <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.5, marginTop: 12 }}>
-          <b>Mano de Obra</b> va en fila aparte: el <b>Subtotal</b> la excluye y el <b>Total</b> la incluye (más los <b>Ahorros comprometidos</b>, ajuste manual editable). <b>Dif = Comparación − Base</b> (negativa si es menor). Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Comparación ≤ Base · <span style={{ color: '#E0A800' }}>●</span> supera hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> supera en más de {thr.red}%.
+          <b>Mano de Obra</b> va en fila aparte: el <b>Subtotal</b> la excluye y el <b>Total</b> la incluye (más los <b>Ahorros comprometidos</b>, ajuste manual editable). <b>Dif = Base − Comparación</b> (positiva si la comparación es menor). Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Comparación ≤ Base · <span style={{ color: '#E0A800' }}>●</span> supera hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> supera en más de {thr.red}%.
         </div>
       </div>
     );
@@ -1089,7 +1090,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const Fnone = sty.FILL.none, Ftot = sty.FILL.total, Flvl1 = sty.FILL.lvl1;
     const Bgrid = sty.BORD.grid, Btot = sty.BORD.total;
     const INK = 'FF1F2428';
-    const semHex = v => (v > thr.red ? 'FFDC3545' : v <= 0 ? 'FF1F9D57' : 'FFE0A800');
+    const semHex = v => (v < -thr.red ? 'FFDC3545' : v >= 0 ? 'FF1F9D57' : 'FFE0A800');
     const isB = c => baseCol && c.key === baseCol.key;
     const meta = [];   // val / dif / pct por columna (Dif y % Dif SIEMPRE en presentación)
     cols.forEach(c => { meta.push('val'); if (baseCol && !isB(c)) { meta.push('dif'); meta.push('pct'); } });
@@ -1105,7 +1106,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         const v = (agg ? valOf(c, { agg }) : 0) + ((add && add[c.key]) || 0);
         out.push(nc(v));
         if (baseCol && !isB(c)) {
-          const dif = v - bv, pct = v ? dif / Math.abs(v) : null;   // Dif = Comparación − Base
+          const dif = bv - v, pct = v ? dif / Math.abs(v) : null;   // Dif = Base − Comparación
           out.push(nc(dif));
           out.push(pct == null ? '' : { t: 'n', v: Math.round(pct * 1000) / 10 });
         }
@@ -1206,7 +1207,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           if (off || baseOff) { out.push(''); out.push(''); }
           else {
             const v = valOf(c, node);
-            const dif = v - baseVal;   // Dif = Comparación − Base (negativa si la comparación es menor que la base)
+            const dif = baseVal - v;   // Dif = Base − Comparación (positiva si la comparación es menor que la base)
             const pct = v ? dif / Math.abs(v) : null;   // ratio; se exporta como %-puntos (×100)
             out.push(numCell(dif));
             out.push(pct == null ? '' : { t: 'n', v: Math.round(pct * 1000) / 10 });
@@ -1220,7 +1221,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     // que la imagen de referencia. Semáforo = misma regla del panel (kpiColor): verde si está a/bajo
     // la base, rojo si la supera por más del umbral rojo, ámbar en el medio.
     const INK = 'FF1F2428';
-    const semHex = v => (v > thr.red ? 'FFDC3545' : v <= 0 ? 'FF1F9D57' : 'FFE0A800');
+    const semHex = v => (v < -thr.red ? 'FFDC3545' : v >= 0 ? 'FF1F9D57' : 'FFE0A800');
     const styleValueRow = (raw, bold, fill, bord) => raw.map((rc, i) => {
       const m = colMeta[i];
       if (rc === '' || rc == null || rc.v == null || !isFinite(rc.v)) return { v: '', s: sty.blank(bold, fill, bord) };
