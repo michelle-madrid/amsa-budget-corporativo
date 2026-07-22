@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Gestión AMSA — Dashboard Presupuesto</title>
+<style>
+  :root{
+    --teal:#2a8a96; --teal-d:#14515a; --teal-l:#b9dde0;
+    --amber:#f0a929; --amber-d:#c47f00;
+    --gray:#3a2e10; --ink:#1f2428; --gray-l:#718096;
+    --bg:#f0f4f5; --card:#fff; --border:#d1d9e0;
+    --ok:#1f9d57; --err:#e63b2e; --radius:8px; --shadow:0 2px 8px rgba(0,0,0,.08);
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+  input,select,button,textarea{font:inherit}
+
+  .header{background:linear-gradient(135deg,var(--teal-d) 0%,var(--teal) 100%);color:#fff;
+          padding:16px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 2px 12px rgba(0,0,0,.18)}
+  .header-logo{font-size:20px;font-weight:700;letter-spacing:.3px}
+  .header-sub{font-size:12px;opacity:.8;margin-top:2px}
+  .header-spacer{flex:1}
+  .status-pill{display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:20px;
+               background:rgba(255,255,255,.18);font-size:12px;font-weight:600;transition:background .3s}
+  .status-pill .dot{width:8px;height:8px;border-radius:50%;background:#7DFFB3;transition:background .3s}
+  .status-pill.running{background:rgba(240,169,41,.4)}
+  .status-pill.running .dot{background:var(--amber);animation:blink 1s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+  .accent{height:3px;background:linear-gradient(90deg,var(--teal),var(--amber) 60%,var(--err))}
+
+  .tabs{background:var(--card);border-bottom:2px solid var(--border);display:flex;padding:0 32px}
+  .tab-btn{padding:13px 20px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;
+           color:var(--gray-l);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
+  .tab-btn:hover{color:var(--teal-d)}
+  .tab-btn.active{color:var(--teal-d);border-bottom-color:var(--teal)}
+
+  .main{padding:24px 32px;max-width:960px;margin:0 auto}
+  .panel{display:none}.panel.active{display:block}
+
+  .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 22px;margin-bottom:18px}
+  .card-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--teal-d);
+              margin-bottom:14px;padding-bottom:9px;border-bottom:2px solid var(--bg)}
+  .ref-row{display:flex;gap:10px;padding:4px 0;font-size:13px}
+  .ref-row b{width:150px;color:var(--gray-l);font-weight:600}
+  .ref-row span{color:var(--teal-d);font-family:Consolas,monospace}
+
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  select,input[type=text]{padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;background:#fafbfc;color:var(--ink)}
+  select{flex:1;min-width:220px}
+  select:focus,input:focus{outline:none;border-color:var(--teal);background:#fff}
+  label.inl{font-size:12px;color:var(--gray-l);display:flex;align-items:center;gap:6px}
+  .hint{font-size:11px;color:var(--gray-l);margin-top:8px}
+
+  button.btn{padding:9px 16px;border:none;border-radius:6px;background:var(--teal);color:#fff;font-weight:700;
+             cursor:pointer;transition:.15s}
+  button.btn:hover{background:var(--teal-d)}
+  button.btn.ghost{background:var(--bg);color:var(--gray-l);border:1.5px solid var(--border)}
+  button.btn.ghost:hover{background:#e6edee;color:var(--teal-d)}
+  button.btn.go{background:var(--ok)}button.btn.go:hover{background:#177d44}
+  button.btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .radios{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+  .radios label{display:flex;gap:10px;align-items:flex-start;font-size:14px;cursor:pointer}
+  .radios small{color:var(--gray-l)}
+
+  .console{background:#0e3f47;color:#eaf3f4;font-family:Consolas,monospace;font-size:12.5px;line-height:1.5;
+           border-radius:var(--radius);padding:14px 16px;height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+  .console .ok{color:#8fe3b0}.console .err{color:#ff9a90}.console .info{color:var(--teal-l)}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+
+  /* progreso */
+  .prog-wrap{margin-bottom:12px}
+  .prog-meta{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:5px}
+  .prog-meta .step{color:var(--teal-d);font-weight:700}
+  .prog-meta .time{color:var(--gray-l);font-variant-numeric:tabular-nums}
+  .prog{height:10px;background:#e3eaec;border-radius:6px;overflow:hidden}
+  .prog .bar{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--teal-d));
+             border-radius:6px;transition:width .4s ease}
+  .prog.run .bar{background:linear-gradient(90deg,var(--amber),var(--teal))}
+  .pill-time{margin-left:6px;font-variant-numeric:tabular-nums;opacity:.9}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="header-logo">Control de Gestión AMSA — Dashboard Presupuesto</div>
+      <div class="header-sub">Antofagasta Minerals · Presupuesto 2027</div>
+    </div>
+    <div class="header-spacer"></div>
+    <div class="status-pill" id="pill"><span class="dot"></span><span id="pillTxt">Listo</span><span class="pill-time" id="pillTime"></span></div>
+  </div>
+  <div class="accent"></div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="datos">⚙ Actualizar datos</button>
+    <button class="tab-btn" data-tab="publicar">▶ Publicar</button>
+    <button class="tab-btn" data-tab="salida">▤ Salida</button>
+  </div>
+
+  <div class="main">
+    <!-- ── DATOS ── -->
+    <div class="panel active" id="tab-datos">
+      <div class="card">
+        <div class="card-title">Referencias vigentes</div>
+        <div class="ref-row"><b>Presupuesto 2027</b><span id="ref-ppto">—</span></div>
+        <div class="ref-row"><b>Forecast 5+7</b><span id="ref-forecast">—</span></div>
+        <div class="ref-row"><b>Outlook 6+6</b><span id="ref-outlook">—</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Agregar información Real</div>
+        <div class="row">
+          <select id="sel-real"></select>
+          <button class="btn ghost" onclick="explorar('real')">Explorar…</button>
+          <button class="btn" onclick="agregarReal()">Procesar y agregar</button>
+        </div>
+        <div class="hint">Ajusta los montos a <b>2027 (USD)</b> y suma las filas al maestro de Reales (Corp o Distribuibles, según el CECO). Evita duplicados: si un CECO ya está, lo omite. Dejá los Excel nuevos en <code>uploads/real_total/</code>.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Actualizar Presupuesto 2027</div>
+        <div class="row">
+          <select id="sel-ppto"></select>
+          <button class="btn ghost" onclick="explorar('ppto')">Explorar…</button>
+          <button class="btn" onclick="aplicarRef('ppto')">Aplicar</button>
+        </div>
+        <div class="hint">Cambia la referencia PPTO27_FILE. No requiere hoja Unpivot.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Actualizar Forecast 5+7</div>
+        <div class="row">
+          <select id="sel-forecast"></select>
+          <button class="btn ghost" onclick="explorar('forecast')">Explorar…</button>
+          <button class="btn" onclick="aplicarRef('forecast')">Aplicar</button>
+        </div>
+        <div class="hint">Genera la hoja «Forecast 5+7 Unpivot» (ajuste a 2027) y apunta FCST_FILE.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Actualizar Outlook 6+6</div>
+        <div class="row">
+          <select id="sel-outlook"></select>
+          <button class="btn ghost" onclick="explorar('outlook')">Explorar…</button>
+          <button class="btn" onclick="aplicarRef('outlook')">Aplicar</button>
+        </div>
+        <div class="hint">Genera la hoja «Outlook 6+6 Unpivot» y apunta OUT_FILE.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Preparar un ejercicio nuevo</div>
+        <div class="row">
+          <select id="sel-ejercicios"></select>
+          <button class="btn ghost" onclick="explorar('ejercicios')">Explorar…</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label class="inl" title="Año al que se ajustan los montos en USD por CPI (normalmente 2027).">Ajustar a año (USD) <input type="text" id="ej-anio" value="2027" style="width:90px"></label>
+          <label class="inl">Hoja salida (opcional) <input type="text" id="ej-salida" placeholder="derivar del archivo" style="width:220px"></label>
+          <button class="btn" onclick="ejercicio()">Generar Unpivot</button>
+        </div>
+        <div class="hint">Prepara la hoja «… Unpivot». Si es columna nueva del dashboard, requiere ajuste de código.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Agregar ajustes / reversas al Forecast 5+7</div>
+        <div class="row">
+          <select id="sel-reversas"></select>
+          <button class="btn ghost" onclick="explorar('reversas')">Explorar…</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label class="inl">Se suma a: <b style="color:var(--teal-d)">Forecast 5+7 2026</b></label>
+          <label class="inl"><input type="checkbox" id="rev-ya"> El archivo ya tiene hoja «Unpivot»</label>
+          <button class="btn" onclick="reversa()">Aplicar</button>
+        </div>
+        <div class="hint">Estas filas se <b>suman al Forecast 5+7 2026</b> (Estructura CECOS «Nueva con ajustes»), ajustadas a 2027 USD. Se auto-descubren desde ajustes_forecast/.</div>
+      </div>
+    </div>
+
+    <!-- ── PUBLICAR ── -->
+    <div class="panel" id="tab-publicar">
+      <div class="card">
+        <div class="card-title">¿Dónde publicar?</div>
+        <div class="radios">
+          <label><input type="radio" name="modo" value="1" checked>
+            <span><b>Local</b><br><small>Previsualización en v3/ (sin OneDrive).</small></span></label>
+          <label><input type="radio" name="modo" value="2">
+            <span><b>OneDrive · solo el dashboard completo</b><br><small>Reconstruye y copia el consolidado a OneDrive.</small></span></label>
+          <label><input type="radio" name="modo" value="3">
+            <span><b>OneDrive · completo + separación por VP</b><br><small>Reconstruye todo y publica los dashboards por VP y Gerencia.</small></span></label>
+        </div>
+        <button class="btn go" onclick="publicar()">▶  Reconstruir / Publicar</button>
+      </div>
+    </div>
+
+    <!-- ── SALIDA ── -->
+    <div class="panel" id="tab-salida">
+      <div class="card">
+        <div class="toolbar">
+          <div class="card-title" style="border:none;margin:0;padding:0">Salida del proceso</div>
+          <button class="btn ghost" onclick="limpiar()">Limpiar</button>
+        </div>
+        <div class="prog-wrap">
+          <div class="prog-meta">
+            <span class="step" id="step">Sin tareas en curso</span>
+            <span class="time" id="elapsed"></span>
+          </div>
+          <div class="prog" id="prog"><div class="bar" id="bar"></div></div>
+        </div>
+        <div class="console" id="console"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const $ = s => document.querySelector(s);
+let offset = 0, running = false;
+
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $('#tab-' + b.dataset.tab).classList.add('active');
+});
+
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{})});
+  return r.json();
+}
+
+async function cargarEstado(){
+  const e = await fetch('/api/estado').then(r=>r.json());
+  $('#ref-ppto').textContent     = e.refs.ppto     || '(?)';
+  $('#ref-forecast').textContent = e.refs.forecast || '(?)';
+  $('#ref-outlook').textContent  = e.refs.outlook  || '(?)';
+  for(const t of ['ppto','forecast','outlook','ejercicios','reversas','real']){
+    const sel = $('#sel-'+t); if(!sel) continue;
+    const actual = e.refs[t];
+    sel.innerHTML = '';
+    (e.archivos[t]||[]).forEach(f=>{
+      const o = document.createElement('option'); o.value=f; o.textContent=f;
+      if(f===actual) o.selected=true; sel.appendChild(o);
+    });
+    if(!(e.archivos[t]||[]).length){
+      const o=document.createElement('option'); o.value=''; o.textContent='(sin archivos en la carpeta)'; sel.appendChild(o);
+    }
+  }
+}
+
+// Hitos del build para estimar el avance (subcadena → etiqueta, % objetivo).
+const MILESTONES = [
+  ['Leyendo diccionarios','Leyendo diccionarios',5],
+  ['Leyendo Reales','Leyendo Reales',12],
+  ['Leyendo Planes','Leyendo Planes',20],
+  ['Leyendo Forecast','Leyendo Forecast 5+7',28],
+  ['Leyendo Outlook','Leyendo Outlook 6+6',33],
+  ['Leyendo Reversas','Leyendo reversas',36],
+  ['Leyendo Ppto 2027','Leyendo Ppto 2027',42],
+  ['Leyendo Dotaciones','Leyendo Dotaciones',46],
+  ['Validando JSX','Validando JSX (Babel)',52],
+  ['Construyendo detalle','Construyendo detalle v3',60],
+  ['Leyendo CAPEX','Leyendo CAPEX',64],
+  ['HTML v3','Dashboard v3 generado',70],
+  ['Escribiendo BBDD','Escribiendo BBDD',73],
+  ['Dividiendo el v3','Generando dashboards por VP',78],
+  ['Publicando en','Publicando a OneDrive',96],
+  ['archivos publicados','Publicación completa',99],
+];
+let curPct = 0, vpCount = 0, t0 = null, timer = null;
+
+function pintar(line){
+  const c = $('#console');
+  let cls = '';
+  if(line.includes('[OK]') || line.startsWith('✔')) cls='ok';
+  else if(line.includes('[ERROR]') || line.includes('ERROR')) cls='err';
+  else if(line.startsWith('\n▶') || line.startsWith('▶')) cls='info';
+  const span = document.createElement('span'); if(cls) span.className=cls; span.textContent=line;
+  c.appendChild(span); c.scrollTop = c.scrollHeight;
+}
+
+function paso(label, pct){
+  $('#step').textContent = label;
+  if(pct > curPct){ curPct = pct; $('#bar').style.width = pct + '%'; }
+}
+
+function progreso(line){
+  for(const [sub,label,pct] of MILESTONES) if(line.includes(sub)) paso(label, pct);
+  // Fase por VP: cada VP/Gerencia imprime una línea "…  N regs · M CECOs …"
+  if(/regs\s*·/.test(line) && /CECOs/.test(line)){
+    vpCount++;
+    paso('Generando dashboards por VP… (' + vpCount + ')', 78 + Math.min(17, vpCount/28*17));
+  }
+}
+
+function fmt(ms){ const s=Math.max(0,Math.floor(ms/1000)); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+function tick(){ if(t0){ const e=fmt(Date.now()-t0); $('#elapsed').textContent=e; $('#pillTime').textContent=e; } }
+
+async function poll(){
+  try{
+    const r = await fetch('/api/logs?offset='+offset).then(r=>r.json());
+    (r.lines||[]).forEach(l => { pintar(l); progreso(l); });
+    offset = r.next_offset;
+    setRunning(r.running);
+  }catch(e){}
+  setTimeout(poll, 500);
+}
+
+function setRunning(v){
+  if(v && !running){                       // arranca una tarea
+    running = true; curPct = 0; vpCount = 0; t0 = Date.now();
+    $('#prog').classList.add('run'); $('#bar').style.width = '2%';
+    $('#step').textContent = 'Iniciando…';
+    clearInterval(timer); timer = setInterval(tick, 500); tick();
+  } else if(!v && running){                 // termina
+    running = false; clearInterval(timer);
+    $('#prog').classList.remove('run'); $('#bar').style.width = '100%';
+    $('#step').textContent = 'Listo · ' + ($('#elapsed').textContent || '');
+    $('#pillTime').textContent = '';
+  }
+  $('#pill').classList.toggle('running', v);
+  $('#pillTxt').textContent = v ? 'Procesando…' : 'Listo';
+  document.querySelectorAll('button.btn').forEach(b => b.disabled = v);
+}
+
+function irSalida(){ document.querySelector('.tab-btn[data-tab=salida]').click(); }
+
+async function explorar(tipo){
+  const r = await post('/api/browse', {tipo});
+  if(r.filename){ await cargarEstado(); const sel=$('#sel-'+tipo); if(sel) sel.value=r.filename; }
+}
+async function aplicarRef(tipo){
+  const f = $('#sel-'+tipo).value; if(!f){alert('Elegí un archivo.');return;}
+  irSalida(); await post('/api/actualizar-ref', {tipo, filename:f}); await cargarEstado();
+}
+async function ejercicio(){
+  const f = $('#sel-ejercicios').value; if(!f){alert('Elegí un archivo.');return;}
+  irSalida(); await post('/api/ejercicio', {filename:f, anio:$('#ej-anio').value, salida:$('#ej-salida').value});
+}
+async function reversa(){
+  const f = $('#sel-reversas').value; if(!f){alert('Elegí un archivo.');return;}
+  // El ajuste SIEMPRE se suma al Forecast 5+7 2026, ajustado a 2027 USD (destino fijo).
+  irSalida(); await post('/api/reversa', {filename:f, anio:'2027', ya_tiene:$('#rev-ya').checked});
+}
+async function agregarReal(){
+  const f = $('#sel-real').value; if(!f){alert('Elegí un archivo.');return;}
+  irSalida(); await post('/api/agregar-real', {filename:f}); await cargarEstado();
+}
+async function publicar(){
+  const modo = document.querySelector('input[name=modo]:checked').value;
+  irSalida(); await post('/api/publicar', {modo}); await cargarEstado();
+}
+async function limpiar(){ await post('/api/logs/clear'); offset=0; $('#console').innerHTML=''; }
+
+cargarEstado(); poll();
+</script>
+</body>
+</html>

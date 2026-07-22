@@ -522,6 +522,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const [formato, setFormato] = React.useState('comp');   // 'comp' | 'pres' — Comparador (tabla-árbol) / Presentación (resumen ejecutivo por Ítem Relevante)
   const [ahorros, setAhorros] = React.useState({});       // Presentación: «Ahorros comprometidos» (ajuste manual, {colKey: USD})
   const [presExpanded, setPresExpanded] = React.useState(new Set());   // Presentación (modo VP): Gerencias expandidas → Ítem Relevante
+  const [presTop, setPresTop] = React.useState('ger');   // Presentación: campo del PRIMER nivel (vp/ger/dceco/itemrel/item)
   const [optsOpen, setOptsOpen] = React.useState(false);  // popover "Opciones de tabla" (formato puro: unidad, decimales, Dif/%)
   const optsRef = React.useRef(null);
   const [expanded, setExpanded] = React.useState(() => new Set());
@@ -831,9 +832,12 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   // (Subtotal la excluye, Total la incluye) y arma un 2º bloque Actividad Corporativa vs Distribuibles.
   // El PRIMER nivel de filas depende de «Agrupar por»: Ítem (itemcc) o Gerencia (orgcc, expandible
   // a Ítem). La Presentación va por Ítem (Agrupación4), NO por Ítem Relevante. MdO va aparte.
-  const presDims = groupMode === 'itemcc' ? ['item'] : ['ger', 'item'];
-  const presFirstLbl = groupMode === 'itemcc' ? 'Ítem' : 'Vicepresidencia';
-  const presTopDisp = groupMode === 'itemcc' ? A.dispItem : A.dispGer;   // etiqueta del primer nivel
+  // El PRIMER nivel de la Presentación lo elige el usuario (selector «Presentar por»). Si es Ítem
+  // Relevante o Ítem, es un solo nivel; el resto se puede expandir a Ítem (Agrupación4).
+  const presSingle = presTop === 'item';   // Ítem (Agrupación4) es la hoja; el resto se expande a Ítem
+  const presDims = presSingle ? [presTop] : [presTop, 'item'];
+  const presFirstLbl = RESUMEN_DIM_LBL[presTop] || 'Grupo';
+  const presTopDisp = ({ vp: A.dispVP, ger: A.dispGer, dceco: n => n, itemrel: A.dispItemRel, item: A.dispItem }[presTop]) || (n => n);
   const pres = React.useMemo(() => {
     if (formato !== 'pres' || cols.length === 0) return null;
     const _po = { years: neededYears, showProp: true, yearAgg: 'byYear', version: 'ORI', companies: [], vps, gers, itemrels, items, tcs, cecos, clacos, st: stMode, aps, hidden, overrides, growth: A.DEF_GROWTH, sort: { key: 'real', dir: 'desc' } };
@@ -850,7 +854,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       dist: _bt({ dataMode: 'dist', groupBy: ['itemrel'], clases: _allClas, companias }).total,
     };
     // eslint-disable-next-line
-  }, [formato, groupMode, cols.length, JSON.stringify(neededYears), dataMode, JSON.stringify(vps), JSON.stringify(gers), JSON.stringify(itemrels), JSON.stringify(items), JSON.stringify(tcs), JSON.stringify(clases), JSON.stringify(companias), JSON.stringify(cecos), JSON.stringify(clacos), stMode, JSON.stringify(aps), JSON.stringify(hidden), distOn, overrides, hideComercial]);
+  }, [formato, groupMode, presTop, cols.length, JSON.stringify(neededYears), dataMode, JSON.stringify(vps), JSON.stringify(gers), JSON.stringify(itemrels), JSON.stringify(items), JSON.stringify(tcs), JSON.stringify(clases), JSON.stringify(companias), JSON.stringify(cecos), JSON.stringify(clacos), stMode, JSON.stringify(aps), JSON.stringify(hidden), distOn, overrides, hideComercial]);
 
   // Filtro por código CECO: acotado a VP/Gerencia activas + los ya seleccionados (aunque queden fuera).
   const cecoOpts = [...new Set([...(dimsOpt.cecos || []), ...cecos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
@@ -957,7 +961,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     if (!pres) return <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>;
     const UF = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;   // factor de la unidad en pantalla
     const unitLbl = viewUnit === 'kUSD' ? 'kUSD' : viewUnit === 'USD' ? 'USD' : 'MM USD';
-    const semHexP = v => (v < -thr.red ? '#DC3545' : v >= 0 ? '#1F9D57' : '#E0A800');   // ● semáforo (v = %Dif×100; verde = bajo/igual base)
+    const semHexP = v => (v > thr.red ? '#DC3545' : v <= 0 ? '#1F9D57' : '#E0A800');   // ● semáforo (v = %Dif×100; verde = Dif negativa · amarillo 0–3% · rojo >3%)
     const isBase = c => baseCol && c.key === baseCol.key;
     const vAt = (c, agg, add) => (agg ? valOf(c, { agg }) : 0) + ((add && add[c.key]) || 0);
     const ncols = 1 + cols.reduce((n, c) => n + 1 + (baseCol && !isBase(c) ? 2 : 0), 0);
@@ -1073,7 +1077,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           </tbody>
         </table>
         <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.5, marginTop: 12 }}>
-          <b>Mano de Obra</b> va en fila aparte: el <b>Subtotal</b> la excluye y el <b>Total</b> la incluye (más los <b>Ahorros comprometidos</b>, ajuste manual editable). <b>Dif = Base − Comparación</b> (positiva si la comparación es menor). Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Comparación ≤ Base · <span style={{ color: '#E0A800' }}>●</span> supera hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> supera en más de {thr.red}%.
+          <b>Mano de Obra</b> va en fila aparte: el <b>Subtotal</b> la excluye y el <b>Total</b> la incluye (más los <b>Ahorros comprometidos</b>, ajuste manual editable). <b>Dif = Base − Comparación</b> (positiva si la comparación es menor). Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Dif negativa · <span style={{ color: '#E0A800' }}>●</span> positiva hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> positiva en más de {thr.red}%.
         </div>
       </div>
     );
@@ -1090,7 +1094,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const Fnone = sty.FILL.none, Ftot = sty.FILL.total, Flvl1 = sty.FILL.lvl1;
     const Bgrid = sty.BORD.grid, Btot = sty.BORD.total;
     const INK = 'FF1F2428';
-    const semHex = v => (v < -thr.red ? 'FFDC3545' : v >= 0 ? 'FF1F9D57' : 'FFE0A800');
+    const semHex = v => (v > thr.red ? 'FFDC3545' : v <= 0 ? 'FF1F9D57' : 'FFE0A800');
     const isB = c => baseCol && c.key === baseCol.key;
     const meta = [];   // val / dif / pct por columna (Dif y % Dif SIEMPRE en presentación)
     cols.forEach(c => { meta.push('val'); if (baseCol && !isB(c)) { meta.push('dif'); meta.push('pct'); } });
@@ -1136,7 +1140,10 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     pres.items.forEach(n => {
       if (hideZeros && _expZero(n.agg)) return;
       matrix.push(rowOf(presTopDisp(n.name), n.agg, null, false, Fnone, Bgrid));
-      (n.children || []).forEach(ch => { if (!(hideZeros && _expZero(ch.agg))) matrix.push(rowOf('    ' + A.dispItem(ch.name), ch.agg, null, false, Fnone, Bgrid)); });
+      // Solo exporta los subniveles (Ítem) si el nodo está EXPANDIDO en pantalla (misma clave 'r|'+nombre
+      // que usa renderTree). Con el nodo colapsado, la descarga muestra solo lo que se ve.
+      if (presExpanded.has('r|' + n.name))
+        (n.children || []).forEach(ch => { if (!(hideZeros && _expZero(ch.agg))) matrix.push(rowOf('    ' + A.dispItem(ch.name), ch.agg, null, false, Fnone, Bgrid)); });
     });
     matrix.push(rowOf('Subtotal', pres.subtotal, null, true, Fnone, Bgrid));
     matrix.push(ahorroRow());
@@ -1221,7 +1228,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     // que la imagen de referencia. Semáforo = misma regla del panel (kpiColor): verde si está a/bajo
     // la base, rojo si la supera por más del umbral rojo, ámbar en el medio.
     const INK = 'FF1F2428';
-    const semHex = v => (v < -thr.red ? 'FFDC3545' : v >= 0 ? 'FF1F9D57' : 'FFE0A800');
+    const semHex = v => (v > thr.red ? 'FFDC3545' : v <= 0 ? 'FF1F9D57' : 'FFE0A800');
     const styleValueRow = (raw, bold, fill, bord) => raw.map((rc, i) => {
       const m = colMeta[i];
       if (rc === '' || rc == null || rc.v == null || !isFinite(rc.v)) return { v: '', s: sty.blank(bold, fill, bord) };
@@ -1436,6 +1443,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
           {/* 2 sub-filas: Agrupar·Base·Columnas / Vicepresidencia·Gerencia·Filtros (filtros explícitos, fuera del menú). */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            {formato !== 'pres' ? (
             <div className="fgroup" style={{ minWidth: 140 }}>
               <div style={cap}>Agrupar por</div>
               <select value={groupMode} onChange={e => { setGroupMode(e.target.value); setDimOrder(null); setExpanded(new Set()); setPresExpanded(new Set()); }} style={{ ...fctlSel, maxWidth: 180 }}
@@ -1444,6 +1452,19 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
                 <option value="itemcc">Ítem Relevante › VP</option>
               </select>
             </div>
+            ) : (
+            <div className="fgroup" style={{ minWidth: 140 }}>
+              <div style={cap}>Presentar por</div>
+              <select value={presTop} onChange={e => { setPresTop(e.target.value); setPresExpanded(new Set()); }} style={{ ...fctlSel, maxWidth: 180 }}
+                title="Campo del primer nivel del resumen ejecutivo (se puede expandir a Ítem).">
+                <option value="vp">Vicepresidencia</option>
+                <option value="ger">Gerencia</option>
+                <option value="dceco">Desc. CECO</option>
+                <option value="itemrel">Ítem Relevante</option>
+                <option value="item">Ítem</option>
+              </select>
+            </div>
+            )}
             <div className="fgroup" style={{ minWidth: 130 }}>
               <div style={cap}>Columna Base</div>
               <select value={baseCol ? baseCol.key : ''} style={{ ...fctlSel, maxWidth: 150 }}

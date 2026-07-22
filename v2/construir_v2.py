@@ -97,7 +97,7 @@ OUT_SHEET = "Outlook 6+6 Unpivot"
 # AUTO-DESCUBRIMIENTO: cada .xlsx dejado en esta carpeta que tenga una hoja «… Unpivot» se suma
 # automáticamente (no hay que editar código). Genera la hoja con: python v2/unpivot_ejercicio.py.
 REV_DIR = os.path.join(UP, "ajustes_forecast")
-PPTO27_FILE = os.path.join(UP, "presupuesto_2027", "PPTO27_21_07_2026_17_00.XLSX")
+PPTO27_FILE = os.path.join(UP, "presupuesto_2027", "PPTO27_22_07_2026_13_00.XLSX")
 PPTO27_SHEET = "Sheet1"
 # CAPEX 2027 (hoja "BD AMSA"): base para la pestaña CAPEX. Header en 2 filas, datos desde la 3.
 CAPEX_FILE = os.path.join(UP, "capex", "Presupuesto CAPEX AMSA 2027 v2.xlsx")
