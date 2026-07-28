@@ -1,0 +1,24 @@
+CARPETA DE DATOS DEL DASHBOARD
+==============================
+
+Acá van todos los Excel de entrada. Al correr `python construir.py` (desde la carpeta
+tablero/) el dashboard se regenera de cero a partir de lo que haya en esta carpeta.
+
+Para actualizar los datos: reemplazá el Excel que corresponda por la versión nueva,
+respetando el MISMO nombre, y volvé a correr construir.py.
+
+Archivos principales (sueltos en esta carpeta):
+  - Reales Históricos v2.xlsx              Gasto Real corporativo.
+  - Reales Distribuibles Histórico v2.xlsx Gasto Real de los distribuibles.
+  - Planes Históricos v2.xlsx              Presupuesto histórico.
+  - EXPORT_FORECAST_5+7 2026.xlsx          Forecast 5+7 del año.
+  - Dotaciones Histórico AMSA.xlsx         Dotación (FTE) Propios / Contratista.
+  - Vector Ajuste Data Histórica.xlsx      Factores para llevar cada gasto a moneda 2027.
+
+Subcarpetas:
+  - diccionario/        CECOS.xlsx, CLACOS.xlsx, COMPAÑÍAS.xlsx (los diccionarios).
+  - presupuesto_2027/   El Ppto 2027 vigente (su nombre se indica en PPTO27_FILE de construir.py).
+  - ejercicios_2026/    Forecast 5+7 y Outlook 6+6 del año.
+  - capex/              Presupuesto CAPEX (alimenta la pestaña CAPEX).
+  - ajustes_forecast/   Reversas/ajustes al Forecast (se descubren solos si tienen hoja «… Unpivot»).
+  - real_total/         Excel de Real nuevo para agregar al maestro (ver agregar_real.py).
