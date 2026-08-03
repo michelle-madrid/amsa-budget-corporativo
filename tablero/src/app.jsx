@@ -81,12 +81,13 @@ function _buildSheetStyles(dec) {
     fnt(SOFT, false), fnt(SOFT, true), fnt(CODEC, false, 10), fnt(CODEC, true, 10),
   ];
   const solid = rgb => `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
-  const FILL = { none: 0, gray125: 1, teal: 2, gray: 3, yellow: 4, tealD: 5, total: 6, lvl1: 7 };
+  const FILL = { none: 0, gray125: 1, teal: 2, gray: 3, yellow: 4, tealD: 5, total: 6, lvl1: 7, band: 8 };
   const fills = [
     `<fill><patternFill patternType="none"/></fill>`,
     `<fill><patternFill patternType="gray125"/></fill>`,
     solid('FF2A8A96'), solid('FF717981'), solid('FFF0A929'), solid('FF14515A'),
     solid('FFE7ECEE'), solid('FFEAF2F3'),
+    solid('FFD6E9EC'),   // band: subtotales de sección del Formato 2 (mismo celeste que en pantalla)
   ];
   const GRID = 'FFDCE1E4', TEALD = 'FF14515A';
   const bAll = (style, rgb) => `<border><left style="${style}"><color rgb="${rgb}"/></left><right style="${style}"><color rgb="${rgb}"/></right><top style="${style}"><color rgb="${rgb}"/></top><bottom style="${style}"><color rgb="${rgb}"/></bottom><diagonal/></border>`;
@@ -125,6 +126,14 @@ function _buildSheetStyles(dec) {
     difPlain: (bold, fl, b) => reg(165, bold ? F.boldInk : F.base, fl, b, 'R'),   // Dif en negro (sin color de semáforo)
     pct: (sign, bold, fl, b) => reg(166, signFont(sign, bold), fl, b, 'R'),
     blank: (bold, fl, b) => reg(0, bold ? F.boldInk : F.base, fl, b, 'R'),
+    // Variante de letra BLANCA (misma firma que name/num/difPlain/blank): filas sobre fondo teal
+    // sólido del Formato 2 («… + Mano de Obra» y «Total Centro Corporativo»).
+    w: {
+      name: (bold, fl, b) => reg(0, F.hWhite, fl, b, 'L'),
+      num: (bold, fl, b) => reg(164, F.hWhite, fl, b, 'R'),
+      difPlain: (bold, fl, b) => reg(165, F.hWhite, fl, b, 'R'),
+      blank: (bold, fl, b) => reg(0, F.hWhite, fl, b, 'R'),
+    },
     xml: () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="${numFmts.length}">${numFmts.join('')}</numFmts><fonts count="${fonts.length}">${fonts.join('')}</fonts><fills count="${fills.length}">${fills.join('')}</fills><borders count="${borders.length}">${borders.join('')}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
   };
 }
@@ -473,7 +482,16 @@ const RESUMEN_DIMS = {
 // Meses para el selector «YTD 2026 hasta» (corte del Real y Ppto YTD en vivo).
 const MESES_YTD = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 // Presentación · Formato 2 (resumen ejecutivo por secciones de negocio).
-const OFFSHORE_VPS = ['Directorio', 'Oficina China', 'Oficina Londres'];   // sección «Gasto Off-Shore»
+const OFFSHORE_VPS = ['Directorio', 'Oficina China', 'Oficina Londres'];   // sección «Gasto Oficinas Internacionales»
+// Formato 3 · orden de la vista inicial (sin filtros, abierto por VP): el mismo del «Reporte
+// Presidente Ejecutivo». Las VP que no estén en la lista van después, de mayor a menor por Dif;
+// Seguros Compañías e Impuestos / Patentes / Legales van siempre al final, en ese orden.
+const F3_VP_ORDEN = [
+  'VP Finanzas', 'VP Desarrollo de Negocios e Innovación', 'VP Exploraciones y Recursos Mineros',
+  'VP Planificación y Servicios Técnicos', 'VP Personas y Organización', 'VP Asuntos Corporativos',
+  'VP Sustentabilidad', 'VP Legal', 'VP Comercialización', 'VP Proyectos',
+  'Presidencia Ejecutiva', 'Gerencia de Auditoría',
+];
 const CLAS_MDO = 'Mano de Obra', CLAS_OPEX = 'Total Opex', CLAS_SEG = 'Seguros', CLAS_IMP = 'Impuestos / Patentes/ Legales';   // valores de Clasificación Cuenta
 
 function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode, onCecoMode, hideComercial, onHideComercial, hideFletes, onHideFletes, acTodoTC, onAcTodoTC, ytdMes, onYtdMes, ytdMesMax, st, set, thr }) {
@@ -529,11 +547,14 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const [viewUnit, setViewUnit] = React.useState(unit || 'MUSD');   // unidad de ESTA vista (pantalla + descarga Excel): MUSD/kUSD/USD
   const [colsOpen, setColsOpen] = React.useState(false);
   const [formato, setFormato] = React.useState('comp');   // 'comp' | 'pres' — Comparador (tabla-árbol) / Presentación (resumen ejecutivo por Ítem Relevante)
-  const [presFmt, setPresFmt] = React.useState(1);        // Presentación: 1 = layout actual · 2 = resumen ejecutivo por secciones (Gasto Act. Corp / Off-Shore / Distribuibles)
+  const [presFmt, setPresFmt] = React.useState(1);        // Presentación: 1 = layout actual · 2 = resumen ejecutivo por secciones (MdO / Act. Corp / Distribuibles / Oficinas Internacionales) · 3 = Act. Corporativa + Distribuibles abierto por «Presentar por»
   const [pres2Exp, setPres2Exp] = React.useState(() => new Set());   // F2: filas expandidas ('cg' Gastos Act. Corp · 'dm' Distribuibles)
+  const [pres2Hide, setPres2Hide] = React.useState(() => new Set()); // F2/F3: líneas ocultas a mano con ⊘ (solo visual: los subtotales/Total NO cambian)
+  const [pres2Sort, setPres2Sort] = React.useState(null);            // F2: orden de las aperturas por columna — { key: colKey | colKey_d | colKey_p | '__name', dir: 'asc'|'desc' } · null = orden natural
+  // F3: mismo convenio de orden. null = orden inicial (ver pres3Sorted): sin filtros y por VP va el
+  // orden fijo del Reporte del Presidente Ejecutivo; en cualquier otro caso, mayor→menor por Dif.
+  const [pres3Sort, setPres3Sort] = React.useState(null);
   const [ahorros, setAhorros] = React.useState({});       // Presentación F1: «Ahorros comprometidos» (ajuste manual, {colKey: USD})
-  const [ahorrosCorp, setAhorrosCorp] = React.useState({}); // Presentación F2: «Ahorros comprometidos» del bloque Corporativo ({colKey: USD})
-  const [ahorrosDist, setAhorrosDist] = React.useState({}); // Presentación F2: «Ahorros comprometidos» del bloque Distribuibles ({colKey: USD})
   const [presExpanded, setPresExpanded] = React.useState(new Set());   // Presentación (modo VP): Gerencias expandidas → Ítem Relevante
   const [presTop, setPresTop] = React.useState('ger');   // Presentación: campo del PRIMER nivel (vp/ger/dceco/itemrel/item)
   const [optsOpen, setOptsOpen] = React.useState(false);  // popover "Opciones de tabla" (formato puro: unidad, decimales, Dif/%)
@@ -900,6 +921,109 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     // eslint-disable-next-line
   }, [formato, presFmt, presTop, cols.length, JSON.stringify(neededYears), JSON.stringify(gamsas), JSON.stringify(vps), JSON.stringify(gers), JSON.stringify(itemrels), JSON.stringify(items), JSON.stringify(tcs), JSON.stringify(companias), JSON.stringify(cecos), JSON.stringify(clacos), stMode, JSON.stringify(aps), JSON.stringify(hidden), overrides, valMode, cecoMode, hideComercial, hideFletes, acTodoTC, ytdMes]);
 
+  // PRESENTACIÓN · Formato 3 — un solo cuadro: Mano de Obra arriba y el resto del gasto
+  // (Actividad Corporativa + Distribuibles, SIN las VP off-shore) abierto por el campo de
+  // «Presentar por», con Seguros Compañías e Impuestos / Patentes / Legales en línea propia.
+  // El Total cuadra exactamente con la línea «… + Distribuibles + Mano de Obra» del Formato 2.
+  const pres3 = React.useMemo(() => {
+    if (formato !== 'pres' || presFmt !== 3 || cols.length === 0) return null;
+    const _po = { years: neededYears, showProp: true, yearAgg: 'byYear', version: 'ORI', companies: [], gamsas, vps, gers, itemrels, items, tcs, cecos, clacos, st: stMode, aps, hidden, overrides, growth: A.DEF_GROWTH, sort: { key: 'real', dir: 'desc' } };
+    const tot = ex => A.buildTree({ ..._po, groupBy: ['vp'], ...ex }).total;   // groupBy da igual: solo usamos .total
+    // Filas del cuadro: Opex + Seguros corporativos (sin off-shore) + Opex/MdO distribuible, agrupado
+    // por presTop. Los Impuestos y los Seguros DISTRIBUIBLES salen de acá: van en su propia línea.
+    const cg = A.buildTree({ ..._po, dataMode: 'corp', exclVps: OFFSHORE_VPS, clases: [CLAS_OPEX, CLAS_SEG], groupBy: [presTop] });
+    const dm = A.buildTree({ ..._po, dataMode: 'dist', clases: [CLAS_OPEX, CLAS_MDO], companias, groupBy: [presTop] });
+    // Un mismo VP/Gerencia/Ítem puede venir por los dos lados (corporativo y distribuible): se suman.
+    const map = new Map();
+    [cg.vpNodes, dm.vpNodes].forEach(ns => (ns || []).forEach(n => {
+      const cur = map.get(n.name); if (cur) cur.push(n.agg); else map.set(n.name, [n.agg]);
+    }));
+    return {
+      // Mano de Obra: TODA la MdO corporativa (incluidas las oficinas internacionales), como en el F2.
+      mdo: tot({ dataMode: 'corp', clases: [CLAS_MDO] }),
+      rows: [...map.entries()].map(([name, aggs]) => ({ name, agg: aggs.length > 1 ? _sumAggs(aggs) : aggs[0] })),
+      // Seguros Compañías = SOLO los seguros distribuibles (los corporativos van en la fila de su VP).
+      seg: tot({ dataMode: 'dist', clases: [CLAS_SEG], companias }),
+      // Impuestos / Patentes / Legales: corporativo (sin off-shore) + distribuible, en una sola línea.
+      imp: _sumAggs([tot({ dataMode: 'corp', exclVps: OFFSHORE_VPS, clases: [CLAS_IMP] }), tot({ dataMode: 'dist', clases: [CLAS_IMP], companias })]),
+    };
+    // eslint-disable-next-line
+  }, [formato, presFmt, presTop, cols.length, JSON.stringify(neededYears), JSON.stringify(gamsas), JSON.stringify(vps), JSON.stringify(gers), JSON.stringify(itemrels), JSON.stringify(items), JSON.stringify(tcs), JSON.stringify(companias), JSON.stringify(cecos), JSON.stringify(clacos), stMode, JSON.stringify(aps), JSON.stringify(hidden), overrides, valMode, cecoMode, hideComercial, hideFletes, acTodoTC, ytdMes]);
+
+  // ===== Formato 2 / 3: orden por columna (clic en el encabezado) =====
+  // Mismo convenio de claves que el Comparador: 'colKey' = valor · 'colKey_d' = Dif · 'colKey_p' = % Dif
+  // · '__name' = el nombre (columna Concepto). Se usa en pantalla Y en la descarga a Excel.
+  // En el F2 ordena solo las aperturas (filas hijas); en el F3 ordena las filas del cuadro.
+  const pres2Sort_ = presFmt === 3 ? pres3Sort : pres2Sort;
+  const setPres2Sort_ = presFmt === 3 ? setPres3Sort : setPres2Sort;
+  const pres2SortVal = node => {
+    const k = pres2Sort_ ? pres2Sort_.key : null;
+    if (!k || k === '__name') return 0;
+    let base = k, kind = 'val';
+    if (k.endsWith('_d')) { base = k.slice(0, -2); kind = 'dif'; }
+    else if (k.endsWith('_p')) { base = k.slice(0, -2); kind = 'pct'; }
+    const c = colByKey[base]; if (!c) return 0;
+    const v = valOf(c, node);
+    if (kind === 'val') return v;
+    const bv = baseCol ? valOf(baseCol, node) : 0;
+    const dif = bv - v;   // Dif = Base − Comparación
+    if (kind === 'dif') return dif;
+    return v ? dif / Math.abs(v) : NaN;   // % Dif indefinido si el período es 0 → al final
+  };
+  // Devuelve una copia ordenada (no muta los nodos del memo `pres2`). Sin orden activo → tal cual.
+  // `nameOf` = cómo leer el rótulo de un nodo al ordenar por «Concepto» (el F3 ya trae el rótulo listo).
+  const pres2SortNodes = (nodes, nameOf) => {
+    nameOf = nameOf || (n => presTopDisp(n.name));
+    if (!pres2Sort_ || !nodes || nodes.length < 2) return nodes || [];
+    const dir = pres2Sort_.dir === 'asc' ? 1 : -1;
+    if (pres2Sort_.key === '__name')
+      return nodes.slice().sort((a, b) => String(nameOf(a)).localeCompare(String(nameOf(b)), 'es') * dir);
+    return nodes.slice().sort((a, b) => {
+      const va = pres2SortVal(a), vb = pres2SortVal(b);
+      const na = va == null || isNaN(va), nb = vb == null || isNaN(vb);
+      if (na && nb) return 0; if (na) return 1; if (nb) return -1;   // indefinidos al final
+      return (va - vb) * dir;
+    });
+  };
+  // Clic en encabezado: 1º mayor→menor · 2º menor→mayor · 3º vuelve al orden natural del árbol.
+  // (En «Concepto» arranca A→Z, que es lo natural para texto.)
+  const pres2ClickSort = key => setPres2Sort_(s => {
+    const first = key === '__name' ? 'asc' : 'desc';
+    if (!s || s.key !== key) return { key, dir: first };
+    if (s.dir === first) return { key, dir: first === 'asc' ? 'desc' : 'asc' };
+    return null;
+  });
+
+  // ===== Formato 3: orden de las filas del cuadro =====
+  // «Filtrado» = el usuario acotó la vista (VP, Gerencia, Ítem, CECO, CLACO, compañías, búsqueda).
+  // Los cortes que YA arrancan con algo puesto NO cuentan —Grupo AMSA, Tipo Costo, Clasificación
+  // Cuenta, Services & Tech y los valores ocultos (el CLACO de fletes viene oculto de fábrica)—:
+  // si contaran, la vista inicial se consideraría filtrada y nunca se vería el orden fijo.
+  const pres3Filtrado = !!(vps.length || gers.length || itemrels.length || items.length || cecos.length
+    || clacos.length || aps.length || (distOn && companias.length) || q);
+  // «La diferencia» = Dif de la 1ª columna de comparación (Base − Comparación). Si solo hay base, su valor.
+  const _pres3DifCol = cols.find(c => !baseCol || c.key !== baseCol.key) || null;
+  const pres3Dif = agg => {
+    const bv = (baseCol && agg) ? valOf(baseCol, { agg }) : 0;
+    if (!_pres3DifCol) return bv;
+    const v = agg ? valOf(_pres3DifCol, { agg }) : 0;
+    return baseCol ? bv - v : v;
+  };
+  // Orden vigente del cuadro: el del encabezado si hay uno activo; si no, el orden inicial —
+  // sin filtros y abierto por VP, el orden fijo del Reporte del Presidente Ejecutivo (Seguros e
+  // Impuestos al final); en cualquier otro caso, de mayor a menor por Dif.
+  const pres3Sorted = rows => {
+    if (pres2Sort_) return pres2SortNodes(rows, n => n.name);
+    const porDif = (a, b) => pres3Dif(b.agg) - pres3Dif(a.agg);
+    if (presTop !== 'vp' || pres3Filtrado) return rows.slice().sort(porDif);
+    const idx = r => {
+      if (r.fin) return 1000 + r.fin;                       // Seguros (1) → Impuestos (2), al final
+      const i = F3_VP_ORDEN.indexOf(r.name);
+      return i < 0 ? 500 : i;                               // VP fuera de la lista: entre medio, por Dif
+    };
+    return rows.slice().sort((a, b) => idx(a) - idx(b) || porDif(a, b));
+  };
+
   // Filtro por código CECO: acotado a VP/Gerencia activas + los ya seleccionados (aunque queden fuera).
   const cecoOpts = [...new Set([...(dimsOpt.cecos || []), ...cecos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));
   const clacoOpts = [...new Set([...(dimsOpt.clacos || []), ...clacos])].sort((a, b) => a.localeCompare(b, 'es')).map(v => ({ value: v, label: v }));   // filtro por código CLACO (Clase de Costo)
@@ -1032,16 +1156,24 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       });
       return tds;
     };
+    // «⊘ Ocultar línea» (Formato 2): saca la fila de la pantalla y de la descarga, PERO no cambia
+    // los subtotales ni el Total (es un recorte visual para presentar). Se restaura con el botón
+    // «Restaurar N líneas ocultas» que aparece sobre la tabla.
+    const togHide2 = k => setPres2Hide(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+    const hideBtn = k => (
+      <button className="rowhide" title="Ocultar esta línea (no cambia los subtotales ni el Total)"
+        onClick={e => { e.stopPropagation(); togHide2(k); }}>⊘</button>
+    );
     // Fila editable «Ahorros comprometidos»: SOLO las columnas de Forecast (5+7 / Outlook 6+6)
     // llevan input (dato manual); el resto va en blanco. El valor se suma al Total de esa columna.
     const esFcst = c => c.kind === 'fcst' || c.kind === 'out66';
-    // Fila editable de «Ahorros comprometidos». store/setStore permiten usar distintos ajustes
-    // (Formato 1: `ahorros`; Formato 2: `ahorrosCorp` / `ahorrosDist`). indent = sangría del rótulo.
-    const ahorroRow = (k, store, setStore, indent) => {
+    // Fila editable de «Ahorros comprometidos» — solo Formato 1 (el Formato 2 no la lleva).
+    // store/setStore permiten usar distintos ajustes · indent = sangría del rótulo.
+    const ahorroRow = (k, store, setStore, indent, hideable) => {
       store = store || ahorros; setStore = setStore || setAhorros;
       return (
       <tr key={k}>
-        <td className="name" style={{ padding: '5px 12px', paddingLeft: 12 + (indent || 0), fontStyle: 'italic', color: 'var(--fg-muted)' }}>Ahorros comprometidos</td>
+        <td className="name" style={{ padding: '5px 12px', paddingLeft: 12 + (indent || 0), fontStyle: 'italic', color: 'var(--fg-muted)' }}>Ahorros comprometidos{hideable ? hideBtn(k) : null}</td>
         {cols.map(c => {
           const csl = [<td key={c.key} className="tnum" style={{ textAlign: 'right', padding: '5px 12px' }}>
             {esFcst(c)
@@ -1057,34 +1189,51 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     );
     };
     const th = (label, sty) => <th style={{ padding: '9px 12px', fontSize: 12.5, whiteSpace: 'nowrap', ...sty }}>{label}</th>;
-    // Encabezado (compartido por ambos formatos): 1ª columna + columnas elegidas (con Dif/% Dif).
-    const headRow = firstLabel => (
+    // Flechita de orden del encabezado (Formato 2 / 3): ▼/▲ si es la columna activa, ⇅ tenue si no.
+    const sortMark = k => {
+      const on = pres2Sort_ && pres2Sort_.key === k;
+      return <span style={{ fontSize: on ? 9 : 8.5, marginLeft: 5, opacity: on ? 1 : .35 }}>{on ? (pres2Sort_.dir === 'asc' ? '▲' : '▼') : '⇅'}</span>;
+    };
+    // Encabezado: 1ª columna + columnas elegidas (con Dif/% Dif). En el Formato 2 cada encabezado
+    // es clicleable y ordena SOLO las aperturas (filas hijas); el resto del cuadro no se mueve.
+    const headRow = firstLabel => {
+      const sortable = (k, node, sty) => (
+        <th key={k} onClick={() => pres2ClickSort(k)}
+          title={'Ordenar las aperturas por esta columna (clic: mayor→menor · menor→mayor · orden original)'}
+          style={{ padding: '9px 12px', fontSize: 12.5, whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', ...sty }}>{node}{sortMark(k)}</th>
+      );
+      return (
       <tr>
-        {th(<React.Fragment>{firstLabel} <span style={{ opacity: .8, fontWeight: 400 }}>({unitLbl})</span></React.Fragment>, { textAlign: 'left', background: 'var(--amsa-teal)', color: '#fff' })}
+        {sortable('__name', <React.Fragment>{firstLabel} <span style={{ opacity: .8, fontWeight: 400 }}>({unitLbl})</span></React.Fragment>, { textAlign: 'left', background: 'var(--amsa-teal)', color: '#fff' })}
         {cols.map(c => {
-          const arr = [<th key={c.key} style={{ padding: '9px 12px', fontSize: 12.5, whiteSpace: 'nowrap', textAlign: 'right', background: isBase(c) ? '#7d858b' : 'var(--amsa-yellow)', color: isBase(c) ? '#fff' : '#3a2e10' }}>{c.label}</th>];
+          const arr = [sortable(c.key, c.label, { textAlign: 'right', background: isBase(c) ? '#7d858b' : 'var(--amsa-yellow)', color: isBase(c) ? '#fff' : '#3a2e10' })];
           if (baseCol && !isBase(c)) {
-            arr.push(<th key={c.key + '_d'} style={{ padding: '9px 12px', fontSize: 12, textAlign: 'right', background: 'var(--amsa-teal)', color: '#fff' }}>Dif</th>);
-            arr.push(<th key={c.key + '_p'} style={{ padding: '9px 12px', fontSize: 12, textAlign: 'left', background: 'var(--amsa-teal)', color: '#fff' }}>% Dif</th>);
+            arr.push(sortable(c.key + '_d', 'Dif', { fontSize: 12, textAlign: 'right', background: 'var(--amsa-teal)', color: '#fff' }));
+            arr.push(sortable(c.key + '_p', '% Dif', { fontSize: 12, textAlign: 'left', background: 'var(--amsa-teal)', color: '#fff' }));
           }
           return arr;
         })}
       </tr>
-    );
+      );
+    };
 
     // ===== PRESENTACIÓN · FORMATO 2 (resumen ejecutivo por secciones) =====
     if (presFmt === 2) {
       if (!pres2) return <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>;
       const p = pres2;
-      const C_LINE = { background: '#fff', fontWeight: 700 };            // fila destacada (Mano de Obra, Distribuibles)
-      const indent = lbl => <span style={{ paddingLeft: 16 }}>{lbl}</span>;
-      const corpSubA = _sumAggs([p.corpMdo, p.corpGastos, p.corpImp]);
+      // Bandas del formato: subtotales de sección en celeste claro; las dos líneas de cierre
+      // («… + Distribuibles + Mano de Obra» y «Total Centro Corporativo») en teal sólido con letra blanca.
+      const C_BAND = { background: '#d6e9ec', color: 'var(--amsa-teal-deep)', fontWeight: 700 };
+      const C_HEAD = { background: 'var(--amsa-teal)', color: '#fff', fontWeight: 700 };
+      // Sangría de las líneas de detalle: iguala el ancho de la flechita ▸ de las filas expandibles.
+      const indent = lbl => <span style={{ paddingLeft: 18 }}>{lbl}</span>;
+      // Gasto Actividad Corporativa = Gastos Act. Corp + Impuestos. NO incluye Mano de Obra
+      // (la MdO va en su propia línea arriba y se suma recién en la línea de cierre).
+      const corpSubA = _sumAggs([p.corpGastos, p.corpImp]);
       const offSubA = _sumAggs(p.off.map(o => o.agg));
       const distSubA = _sumAggs([p.distMain, p.distSeg, p.distImp]);   // subtotal Gasto Distribuibles
-      const totalA = _sumAggs([corpSubA, offSubA, distSubA]);
-      const corpAdd = {}; cols.forEach(c => { corpAdd[c.key] = ahorrosCorp[c.key] || 0; });          // ahorros Corp (se suman en col Forecast)
-      const distAdd = {}; cols.forEach(c => { distAdd[c.key] = ahorrosDist[c.key] || 0; });          // ahorros Distribuibles
-      const totalAdd = {}; cols.forEach(c => { totalAdd[c.key] = (ahorrosCorp[c.key] || 0) + (ahorrosDist[c.key] || 0); });
+      const comboA = _sumAggs([p.corpMdo, corpSubA, distSubA]);        // Act. Corporativa + Distribuibles + MdO
+      const totalA = _sumAggs([comboA, offSubA]);                      // + Oficinas Internacionales
       // «Ocultar filas en cero»: oculta una fila cuyo valor (incluido su ajuste `add`) es 0 en TODAS
       // las columnas elegidas. El Total y las filas editables «Ahorros comprometidos» siempre se muestran.
       const zHide = (agg, add) => hideZeros && cols.length > 0 && cols.every(c => vAt(c, agg, add) === 0);
@@ -1098,38 +1247,111 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         </span>
       );
       const childRows = (k, nodes) => pres2Exp.has(k)
-        ? (nodes || []).filter(n => !(hideZeros && cols.every(c => (n.agg ? valOf(c, { agg: n.agg }) : 0) === 0)))
-            .map((n, i) => <tr key={k + '-c' + i}>{rowTds(<span style={{ paddingLeft: 34 }}>{presTopDisp(n.name)}</span>, null, n.agg, null, C_KID)}</tr>)
+        ? pres2SortNodes(nodes).filter(n => !(hideZeros && cols.every(c => (n.agg ? valOf(c, { agg: n.agg }) : 0) === 0)) && !pres2Hide.has(k + '-c' + n.name))
+            .map(n => <tr key={k + '-c' + n.name}>{rowTds(<React.Fragment><span style={{ paddingLeft: 34 }}>{presTopDisp(n.name)}</span>{hideBtn(k + '-c' + n.name)}</React.Fragment>, null, n.agg, null, C_KID)}</tr>)
         : null;
+      // Fila del Formato 2: se omite si está en 0 (con «Ocultar filas en cero») o si se ocultó a mano
+      // con ⊘. El rótulo lleva el botón ⊘ al costado (visible al pasar el mouse por la fila).
+      const rowF2 = (k, label, agg, add, cs) => (pres2Hide.has(k) || zHide(agg, add)) ? null
+        : <tr key={k}>{rowTds(<React.Fragment>{label}{hideBtn(k)}</React.Fragment>, null, agg, add, cs)}</tr>;
+      // Subtotal de sección: se puede ocultar con ⊘ pero NO por «filas en cero» (estructura del formato).
+      const subF2 = (k, label, agg, add, cs) => pres2Hide.has(k) ? null
+        : <tr key={k}>{rowTds(<React.Fragment>{label}{hideBtn(k)}</React.Fragment>, null, agg, add, cs)}</tr>;
+      // Fila en blanco de separación entre secciones (como en el formato de referencia).
+      const gap = k => <tr key={k}><td colSpan={ncols} style={{ height: 12, padding: 0, border: 0, background: 'transparent' }}></td></tr>;
       return (
         <div style={{ padding: '4px 2px 10px', overflowX: 'auto' }}>
+          {pres2Hide.size > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+              <button className="btn ghost" onClick={() => setPres2Hide(new Set())} title="Vuelve a mostrar las líneas que ocultaste con ⊘">
+                ⊘ Restaurar {pres2Hide.size} línea{pres2Hide.size === 1 ? '' : 's'} oculta{pres2Hide.size === 1 ? '' : 's'}
+              </button>
+            </div>
+          )}
           <table className="mtable" style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
             <thead>{headRow('Concepto')}</thead>
             <tbody>
-              {/* Gasto Actividad Corporativa = Corporativo SIN las VP off-shore */}
-              {!zHide(p.corpMdo, null) && <tr>{rowTds('Mano de Obra', null, p.corpMdo, null, C_LINE)}</tr>}
-              {!zHide(p.corpGastos, null) && <tr>{rowTds(expLbl('cg', 'Gastos Actividad Corporativa', 0), null, p.corpGastos, null, C_ITEM)}</tr>}
+              {/* Mano de Obra — TODA la MdO corporativa (incluidas las oficinas internacionales) */}
+              {rowF2('mdo', 'Mano de Obra', p.corpMdo, null, C_BAND)}
+              {gap('g1')}
+              {/* Actividad Corporativa = Corporativo SIN las VP de oficinas internacionales, sin MdO */}
+              {rowF2('cg', expLbl('cg', 'Gastos Actividad Corporativa', 0), p.corpGastos, null, C_ITEM)}
               {childRows('cg', p.corpGastosNodes)}
-              {!zHide(p.corpImp, null) && <tr>{rowTds(indent('Impuestos / Patentes / Legales'), null, p.corpImp, null, C_ITEM)}</tr>}
-              {ahorroRow('f2-corp', ahorrosCorp, setAhorrosCorp, 16)}
-              {!zHide(corpSubA, corpAdd) && <tr>{rowTds('Gasto Actividad Corporativa', null, corpSubA, corpAdd, C_TEAL)}</tr>}
-              {/* Gasto Off-Shore = Directorio + Oficina China + Oficina Londres */}
-              {p.off.map((o, i) => !zHide(o.agg, null) && <tr key={'off' + i}>{rowTds(indent(o.vp), null, o.agg, null, C_ITEM)}</tr>)}
-              {!zHide(offSubA, null) && <tr>{rowTds('Gasto Off-Shore', null, offSubA, null, C_TEAL)}</tr>}
-              {/* Distribuibles + Seguros + Impuestos (Distribuible) */}
-              {!zHide(p.distMain, null) && <tr>{rowTds(expLbl('dm', 'Distribuibles', 0), null, p.distMain, null, C_ITEM)}</tr>}
+              {rowF2('cimp', indent('Impuestos / Patentes / Legales'), p.corpImp, null, C_ITEM)}
+              {subF2('corpSub', 'Gasto Actividad Corporativa', corpSubA, null, C_BAND)}
+              {gap('g2')}
+              {/* Distribuibles + Seguros Compañías + Impuestos (Distribuible) */}
+              {rowF2('dm', expLbl('dm', 'Distribuibles', 0), p.distMain, null, C_ITEM)}
               {childRows('dm', p.distMainNodes)}
-              {ahorroRow('f2-dist', ahorrosDist, setAhorrosDist, 16)}
-              {!zHide(p.distSeg, null) && <tr>{rowTds(indent('Seguros'), null, p.distSeg, null, C_ITEM)}</tr>}
-              {!zHide(p.distImp, null) && <tr>{rowTds(indent('Impuestos / Patentes / Legales'), null, p.distImp, null, C_ITEM)}</tr>}
-              {/* Subtotal Distribuibles */}
-              <tr>{rowTds('Gasto Distribuibles', null, distSubA, distAdd, C_TEAL)}</tr>
-              {/* Total */}
-              <tr>{rowTds('Total Centro Corporativo + Distribuibles', null, totalA, totalAdd, C_TOT)}</tr>
+              {rowF2('dseg', indent('Seguros Compañías'), p.distSeg, null, C_ITEM)}
+              {rowF2('dimp', indent('Impuestos / Patentes / Legales'), p.distImp, null, C_ITEM)}
+              {subF2('distSub', 'Gasto Distribuibles', distSubA, null, C_BAND)}
+              {gap('g3')}
+              {/* Línea de cierre del gasto recurrente (sin oficinas internacionales) */}
+              {subF2('comboSub', 'Gasto Actividad Corporativa + Distribuibles + Mano de Obra', comboA, null, C_HEAD)}
+              {gap('g4')}
+              {/* Oficinas Internacionales = Directorio + Oficina China + Oficina Londres (sin MdO) */}
+              {p.off.map(o => rowF2('off|' + o.vp, indent(o.vp), o.agg, null, C_ITEM))}
+              {subF2('offSub', 'Gasto Oficinas Internacionales', offSubA, null, C_BAND)}
+              {gap('g5')}
+              {/* Total (no se puede ocultar) */}
+              <tr>{rowTds('Total Centro Corporativo', null, totalA, null, C_HEAD)}</tr>
             </tbody>
           </table>
           <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.5, marginTop: 12 }}>
-            <b>Formato 2 (resumen ejecutivo).</b> Oficina China incluye en su Ppto la MO. <b>Gastos Actividad Corporativa</b> y <b>Distribuibles</b> se abren (▸) en detalle por el campo de «Presentar por» ({presFirstLbl}). <b>Dif = Base − Comparación</b>. Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Dif negativa · <span style={{ color: '#E0A800' }}>●</span> positiva hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> mayor.
+            <b>Formato 2 (resumen ejecutivo).</b> <b>Gasto Actividad Corporativa</b> = Gastos Act. Corporativa + Impuestos (<b>no</b> incluye Mano de Obra: la MdO se suma recién en la línea «… + Mano de Obra»). La línea Mano de Obra junta toda la MdO corporativa, incluida la de las oficinas internacionales; Oficina China incluye en su Ppto la MO. <b>Gastos Actividad Corporativa</b> y <b>Distribuibles</b> se abren (▸) en detalle por el campo de «Presentar por» ({presFirstLbl}); el <b>clic en un encabezado</b> ordena esas aperturas por esa columna (mayor→menor · menor→mayor · orden original) sin mover el resto del cuadro. Con <b>⊘</b> (aparece al pasar el mouse por la fila) se oculta una línea en pantalla y en la descarga: es solo un recorte visual, los subtotales y el Total <b>no</b> cambian. <b>Dif = Base − Comparación</b>. Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Dif negativa · <span style={{ color: '#E0A800' }}>●</span> positiva hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> mayor.
+          </div>
+        </div>
+      );
+    }
+
+    // ===== PRESENTACIÓN · FORMATO 3 (Act. Corporativa + Distribuibles abierto por «Presentar por») =====
+    if (presFmt === 3) {
+      if (!pres3) return <div className="empty-msg">Elige al menos una columna en «Columnas a comparar».</div>;
+      const p = pres3;
+      const C_BAND = { background: '#d6e9ec', color: 'var(--amsa-teal-deep)', fontWeight: 700 };
+      const C_HEAD = { background: 'var(--amsa-teal)', color: '#fff', fontWeight: 700 };
+      const zAll = agg => cols.length > 0 && cols.every(c => vAt(c, agg) === 0);
+      // Las 3 líneas fijas (Seguros / Impuestos) y las aperturas van todas al mismo nivel: se ordenan
+      // juntas, igual que en el formato de referencia (Seguros arriba si es la mayor Dif, etc.).
+      // `zSiempre` = la línea se cae cuando queda en 0 aunque «Ocultar filas en cero» esté destildado
+      // (es lo pedido: al filtrar VPs sin Seguros/Impuestos esas líneas desaparecen solas).
+      const rows3 = [
+        ...p.rows.map(n => ({ k: 'f3|r|' + n.name, name: presTopDisp(n.name), agg: n.agg })),
+        { k: 'f3|seg', name: 'Seguros Compañías', agg: p.seg, zSiempre: true, fin: 1 },
+        { k: 'f3|imp', name: 'Impuestos / Patentes / Legales', agg: p.imp, zSiempre: true, fin: 2 },
+      ];
+      const shown = pres3Sorted(rows3).filter(r => !pres2Hide.has(r.k) && !((hideZeros || r.zSiempre) && zAll(r.agg)));
+      // Subtotal = TODAS las filas del cuadro (aunque se hayan ocultado con ⊘ o por estar en cero).
+      const subA = _sumAggs([...rows3.map(r => r.agg)]);
+      const totalA = _sumAggs([subA, p.mdo]);   // + Mano de Obra
+      const rowF3 = (k, label, agg, cs) => (pres2Hide.has(k) || (hideZeros && zAll(agg))) ? null
+        : <tr key={k}>{rowTds(<React.Fragment>{label}{hideBtn(k)}</React.Fragment>, null, agg, null, cs)}</tr>;
+      const gap = k => <tr key={k}><td colSpan={ncols} style={{ height: 12, padding: 0, border: 0, background: 'transparent' }}></td></tr>;
+      return (
+        <div style={{ padding: '4px 2px 10px', overflowX: 'auto' }}>
+          {pres2Hide.size > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+              <button className="btn ghost" onClick={() => setPres2Hide(new Set())} title="Vuelve a mostrar las líneas que ocultaste con ⊘">
+                ⊘ Restaurar {pres2Hide.size} línea{pres2Hide.size === 1 ? '' : 's'} oculta{pres2Hide.size === 1 ? '' : 's'}
+              </button>
+            </div>
+          )}
+          <table className="mtable" style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+            <thead>{headRow('Concepto')}</thead>
+            <tbody>
+              {/* Mano de Obra — TODA la MdO corporativa (incluidas las oficinas internacionales) */}
+              {rowF3('f3|mdo', 'Mano de Obra', p.mdo, C_BAND)}
+              {gap('g1')}
+              {/* Apertura por «Presentar por» + Seguros / Impuestos, ordenadas juntas */}
+              {shown.map(r => <tr key={r.k}>{rowTds(<React.Fragment>{r.name}{hideBtn(r.k)}</React.Fragment>, null, r.agg, null, C_ITEM)}</tr>)}
+              {pres2Hide.has('f3|sub') ? null : <tr key="f3sub">{rowTds(<React.Fragment>Gasto Actividad Corporativa + Distribuibles{hideBtn('f3|sub')}</React.Fragment>, null, subA, null, C_BAND)}</tr>}
+              {/* Total (no se puede ocultar) */}
+              <tr>{rowTds('Gasto Actividad Corporativa + Distribuibles + Mano de Obra', null, totalA, null, C_HEAD)}</tr>
+            </tbody>
+          </table>
+          <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', lineHeight: 1.5, marginTop: 12 }}>
+            <b>Formato 3.</b> Un solo cuadro: la <b>Mano de Obra</b> corporativa arriba (incluida la de las oficinas internacionales) y el resto del gasto —<b>Actividad Corporativa + Distribuibles</b>, sin las VP off-shore— abierto por <b>{presFirstLbl}</b> («Presentar por»). <b>Seguros Compañías</b> (solo los <b>distribuibles</b>: los corporativos van en la fila de su VP) e <b>Impuestos / Patentes / Legales</b> (corporativos + distribuibles) van en línea propia y desaparecen solas cuando el filtro deja esos gastos fuera. La línea <b>Gasto Actividad Corporativa + Distribuibles</b> es la suma de todas esas filas y el <b>Total</b> le agrega la Mano de Obra: cuadra con la línea «… + Distribuibles + Mano de Obra» del Formato 2. El <b>orden inicial</b> es el del «Reporte Presidente Ejecutivo» (Seguros e Impuestos al final) mientras la vista esté abierta por Vicepresidencia y sin filtros; en cuanto se filtra —o se abre por otro campo— pasa a ordenarse de mayor a menor por la <b>Dif</b>. El <b>clic en un encabezado</b> ordena por esa columna (mayor→menor · menor→mayor · vuelve al orden inicial). Con <b>⊘</b> (aparece al pasar el mouse por la fila) se oculta una línea en pantalla y en la descarga: es solo un recorte visual, el subtotal y el Total <b>no</b> cambian. <b>Dif = Base − Comparación</b>. Semáforo en % Dif: <span style={{ color: '#1F9D57' }}>●</span> Dif negativa · <span style={{ color: '#E0A800' }}>●</span> positiva hasta {thr.red}% · <span style={{ color: '#DC3545' }}>●</span> mayor.
           </div>
         </div>
       );
@@ -1225,7 +1447,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
     const isB = c => baseCol && c.key === baseCol.key;
     const meta = [];   // val / dif / pct por columna (Dif y % Dif SIEMPRE en presentación)
     cols.forEach(c => { meta.push('val'); if (baseCol && !isB(c)) { meta.push('dif'); meta.push('pct'); } });
-    const header = [{ v: (presFmt === 2 ? 'Concepto' : presFirstLbl) + ' (' + unitLbl + ')', s: sty.hdrStruct }];
+    const header = [{ v: (presFmt === 1 ? presFirstLbl : 'Concepto') + ' (' + unitLbl + ')', s: sty.hdrStruct }];
     cols.forEach(c => {
       header.push({ v: c.label, s: isB(c) ? sty.hdrBase : sty.hdrPpto });
       if (baseCol && !isB(c)) { header.push({ v: 'Dif', s: sty.hdrDif }); header.push({ v: '% Dif', s: sty.hdrDif }); }
@@ -1244,52 +1466,85 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       });
       return out;
     };
-    const styleRow = (raw, bold, fill, bord) => raw.map((rc, i) => {
-      if (rc === '' || rc == null || rc.v == null || !isFinite(rc.v)) return { v: '', s: sty.blank(bold, fill, bord) };
-      if (meta[i] === 'val') return { t: 'n', v: rc.v, s: sty.num(bold, fill, bord) };
-      if (meta[i] === 'dif') return { t: 'n', v: rc.v, s: sty.difPlain(bold, fill, bord) };
-      const v = rc.v, txt = A.fmtPct(v / 100, 0);   // % Dif: ● semáforo + porcentaje (0 dec, sin '+')
-      return { rich: [{ t: '●', color: semHex(v), bold }, { t: ' ' + txt, color: INK, bold }], s: sty.blank(bold, fill, bord) };
-    });
-    const rowOf = (label, agg, add, bold, fill, bord) => [{ v: label, s: sty.name(bold, fill, bord) }, ...styleRow(rawVals(agg, add), bold, fill, bord)];
+    // `white` = letra blanca (filas sobre teal sólido del Formato 2).
+    const styleRow = (raw, bold, fill, bord, white) => {
+      const S = white ? sty.w : sty;
+      return raw.map((rc, i) => {
+        if (rc === '' || rc == null || rc.v == null || !isFinite(rc.v)) return { v: '', s: S.blank(bold, fill, bord) };
+        if (meta[i] === 'val') return { t: 'n', v: rc.v, s: S.num(bold, fill, bord) };
+        if (meta[i] === 'dif') return { t: 'n', v: rc.v, s: S.difPlain(bold, fill, bord) };
+        const v = rc.v, txt = A.fmtPct(v / 100, 0);   // % Dif: ● semáforo + porcentaje (0 dec, sin '+')
+        return { rich: [{ t: '●', color: semHex(v), bold }, { t: ' ' + txt, color: white ? 'FFFFFFFF' : INK, bold }], s: S.blank(bold, fill, bord) };
+      });
+    };
+    const rowOf = (label, agg, add, bold, fill, bord, white) => [{ v: label, s: (white ? sty.w : sty).name(bold, fill, bord) }, ...styleRow(rawVals(agg, add), bold, fill, bord, white)];
     // Ahorros comprometidos: número manual SOLO en la columna Forecast; resto vacío (incl. Dif/% Dif).
     const ahorroRaw = store => { const out = []; cols.forEach(c => { out.push((c.kind === 'fcst' || c.kind === 'out66') && store[c.key] ? nc(store[c.key]) : ''); if (baseCol && !isB(c)) { out.push(''); out.push(''); } }); return out; };
     const ahorroRow = store => [{ v: 'Ahorros comprometidos', s: sty.name(false, Fnone, Bgrid) }, ...styleRow(ahorroRaw(store || ahorros), false, Fnone, Bgrid)];
     const spacer = () => [{ v: '', s: sty.blank(false, Fnone, null) }, ...meta.map(() => ({ v: '', s: sty.blank(false, Fnone, null) }))];
     let matrix;
+    // Filas de separación del Formato 2: van a media altura (7.5 pt vs los 15 pt por defecto de Excel).
+    const gapRows = [];
     if (presFmt === 2) {
       // ===== FORMATO 2 (resumen ejecutivo por secciones) =====
       const p = pres2;
-      const corpSubA = _sumAggs([p.corpMdo, p.corpGastos, p.corpImp]);
+      const Fband = sty.FILL.band, Fhead = sty.FILL.teal;
+      const corpSubA = _sumAggs([p.corpGastos, p.corpImp]);            // sin Mano de Obra (va aparte)
       const offSubA = _sumAggs(p.off.map(o => o.agg));
       const distSubA = _sumAggs([p.distMain, p.distSeg, p.distImp]);   // subtotal Gasto Distribuibles
-      const totalA = _sumAggs([corpSubA, offSubA, distSubA]);
-      const corpAdd = {}; cols.forEach(c => { corpAdd[c.key] = ahorrosCorp[c.key] || 0; });
-      const distAdd = {}; cols.forEach(c => { distAdd[c.key] = ahorrosDist[c.key] || 0; });
-      const totalAdd = {}; cols.forEach(c => { totalAdd[c.key] = (ahorrosCorp[c.key] || 0) + (ahorrosDist[c.key] || 0); });
+      const comboA = _sumAggs([p.corpMdo, corpSubA, distSubA]);        // Act. Corporativa + Distribuibles + MdO
+      const totalA = _sumAggs([comboA, offSubA]);                      // + Oficinas Internacionales
       // Detalle de las filas expandidas en pantalla ('cg' Gastos Act. Corp · 'dm' Distribuibles).
       const _z2 = agg => cols.every(c => (agg ? valOf(c, { agg }) : 0) === 0);
-      const pushKids = (k, nodes) => { if (pres2Exp.has(k)) (nodes || []).forEach(n => { if (!(hideZeros && _z2(n.agg))) matrix.push(rowOf('        ' + presTopDisp(n.name), n.agg, null, false, Fnone, Bgrid)); }); };
+      // Único nivel con sangría: el detalle de una fila expandida (▸), para no confundirlo con su padre.
+      const pushKids = (k, nodes) => { if (pres2Exp.has(k)) pres2SortNodes(nodes).forEach(n => { if (!(hideZeros && _z2(n.agg)) && !pres2Hide.has(k + '-c' + n.name)) matrix.push(rowOf('    ' + presTopDisp(n.name), n.agg, null, false, Fnone, Bgrid)); }); };
       // «Ocultar filas en cero»: omite en la descarga las filas en 0 en TODAS las columnas (incluye su
-      // ajuste `add`). El Total y las «Ahorros comprometidos» se mantienen (igual que en pantalla).
+      // ajuste `add`). Las líneas ocultas a mano con ⊘ (pres2Hide) tampoco se exportan. El Total va siempre.
       const zHide2 = (agg, add) => hideZeros && cols.every(c => ((agg ? valOf(c, { agg }) : 0) + ((add && add[c.key]) || 0)) === 0);
-      const pushRow = (label, agg, add, bold, fill, bord) => { if (!zHide2(agg, add)) matrix.push(rowOf(label, agg, add, bold, fill, bord)); };
+      const pushRow = (k, label, agg, add, bold, fill, bord) => { if (!pres2Hide.has(k) && !zHide2(agg, add)) matrix.push(rowOf(label, agg, add, bold, fill, bord)); };
+      // Subtotal de sección: se puede ocultar con ⊘ pero NO por «filas en cero» (estructura del formato).
+      const pushSub = (k, label, agg, add, fill, white) => { if (!pres2Hide.has(k)) matrix.push(rowOf(label, agg, add, true, fill, Bgrid, white)); };
+      const pushGap = () => { gapRows.push(matrix.length); matrix.push(spacer()); };
       matrix = [header];
-      pushRow('Mano de Obra', p.corpMdo, null, true, Fnone, Bgrid);
-      pushRow('Gastos Actividad Corporativa', p.corpGastos, null, false, Fnone, Bgrid);
+      pushRow('mdo', 'Mano de Obra', p.corpMdo, null, true, Fband, Bgrid);
+      pushGap();
+      pushRow('cg', 'Gastos Actividad Corporativa', p.corpGastos, null, false, Fnone, Bgrid);
       pushKids('cg', p.corpGastosNodes);
-      pushRow('    Impuestos / Patentes / Legales', p.corpImp, null, false, Fnone, Bgrid);
-      matrix.push(ahorroRow(ahorrosCorp));
-      pushRow('Gasto Actividad Corporativa', corpSubA, corpAdd, true, Flvl1, Bgrid);
-      p.off.forEach(o => pushRow('    ' + o.vp, o.agg, null, false, Fnone, Bgrid));
-      pushRow('Gasto Off-Shore', offSubA, null, true, Flvl1, Bgrid);
-      pushRow('Distribuibles', p.distMain, null, false, Fnone, Bgrid);
+      // Las líneas de detalle van SIN sangría: en la descarga todos los rótulos arrancan al mismo nivel.
+      pushRow('cimp', 'Impuestos / Patentes / Legales', p.corpImp, null, false, Fnone, Bgrid);
+      pushSub('corpSub', 'Gasto Actividad Corporativa', corpSubA, null, Fband);
+      pushGap();
+      pushRow('dm', 'Distribuibles', p.distMain, null, false, Fnone, Bgrid);
       pushKids('dm', p.distMainNodes);
-      matrix.push(ahorroRow(ahorrosDist));
-      pushRow('    Seguros', p.distSeg, null, false, Fnone, Bgrid);
-      pushRow('    Impuestos / Patentes / Legales', p.distImp, null, false, Fnone, Bgrid);
-      matrix.push(rowOf('Gasto Distribuibles', distSubA, distAdd, true, Flvl1, Bgrid));
-      matrix.push(rowOf('Total Centro Corporativo + Distribuibles', totalA, totalAdd, true, Ftot, Btot));
+      pushRow('dseg', 'Seguros Compañías', p.distSeg, null, false, Fnone, Bgrid);
+      pushRow('dimp', 'Impuestos / Patentes / Legales', p.distImp, null, false, Fnone, Bgrid);
+      pushSub('distSub', 'Gasto Distribuibles', distSubA, null, Fband);
+      pushGap();
+      pushSub('comboSub', 'Gasto Actividad Corporativa + Distribuibles + Mano de Obra', comboA, null, Fhead, true);
+      pushGap();
+      p.off.forEach(o => pushRow('off|' + o.vp, o.vp, o.agg, null, false, Fnone, Bgrid));
+      pushSub('offSub', 'Gasto Oficinas Internacionales', offSubA, null, Fband);
+      pushGap();
+      matrix.push(rowOf('Total Centro Corporativo', totalA, null, true, Fhead, Bgrid, true));
+    } else if (presFmt === 3) {
+      // ===== FORMATO 3 (Act. Corporativa + Distribuibles por «Presentar por») =====
+      const p = pres3;
+      const Fband = sty.FILL.band, Fhead = sty.FILL.teal;
+      const _z3 = agg => cols.every(c => (agg ? valOf(c, { agg }) : 0) === 0);
+      const rows3 = [
+        ...p.rows.map(n => ({ k: 'f3|r|' + n.name, name: presTopDisp(n.name), agg: n.agg })),
+        { k: 'f3|seg', name: 'Seguros Compañías', agg: p.seg, zSiempre: true, fin: 1 },
+        { k: 'f3|imp', name: 'Impuestos / Patentes / Legales', agg: p.imp, zSiempre: true, fin: 2 },
+      ];
+      const ordered = pres3Sorted(rows3);   // mismo orden que en pantalla
+      const subA = _sumAggs(rows3.map(r => r.agg));   // subtotal = todas las filas (aunque estén ocultas)
+      const totalA = _sumAggs([subA, p.mdo]);
+      matrix = [header];
+      if (!pres2Hide.has('f3|mdo') && !(hideZeros && _z3(p.mdo))) matrix.push(rowOf('Mano de Obra', p.mdo, null, true, Fband, Bgrid));
+      gapRows.push(matrix.length); matrix.push(spacer());
+      ordered.forEach(r => { if (!pres2Hide.has(r.k) && !((hideZeros || r.zSiempre) && _z3(r.agg))) matrix.push(rowOf(r.name, r.agg, null, false, Fnone, Bgrid)); });
+      if (!pres2Hide.has('f3|sub')) matrix.push(rowOf('Gasto Actividad Corporativa + Distribuibles', subA, null, true, Fband, Bgrid));
+      matrix.push(rowOf('Gasto Actividad Corporativa + Distribuibles + Mano de Obra', totalA, null, true, Fhead, Bgrid, true));
     } else {
       // ===== FORMATO 1 (layout actual) =====
       const corpSub = _sumAggs([pres.corpGastos, pres.corpMdo].filter(Boolean));
@@ -1320,9 +1575,11 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       matrix.push(ahorroRow());
       matrix.push(rowOf('Total', corpSub, t2, true, Ftot, Btot));
     }
-    const widths = [40]; meta.forEach(m => widths.push(m === 'val' ? 15 : m === 'dif' ? 12 : 11));
+    // Col A más ancha en los Formatos 2 y 3: entra la línea «Gasto Act. Corporativa + Distribuibles + Mano de Obra».
+    const widths = [presFmt === 1 ? 40 : 54]; meta.forEach(m => widths.push(m === 'val' ? 15 : m === 'dif' ? 12 : 11));
     const url = URL.createObjectURL(_xlsxStyled(('Resumen ejecutivo ' + unitLbl).slice(0, 31), matrix, {
-      stylesXml: sty.xml(), cols: widths, freeze: { x: 1, y: 1, cell: 'B2' }, rowHeights: { 0: 30 },
+      stylesXml: sty.xml(), cols: widths, freeze: { x: 1, y: 1, cell: 'B2' },
+      rowHeights: gapRows.reduce((h, ri) => { h[ri] = 7.5; return h; }, { 0: 30 }),
     }));
     const a = document.createElement('a');
     a.href = url; a.download = `Resumen ejecutivo (${unitLbl}).xlsx`;
@@ -1336,7 +1593,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   const exportarExcel = () => {
     // En modo Presentación se exporta el RESUMEN EJECUTIVO (dos bloques), no la tabla-árbol del
     // Comparador. Reutiliza los mismos estilos: base gris, resto dorado, Dif/%Dif teal, ● semáforo.
-    if (formato === 'pres' && (pres || pres2)) { exportarPresentacion(); return; }
+    if (formato === 'pres' && (pres || pres2 || pres3)) { exportarPresentacion(); return; }
     const div = viewUnit === 'kUSD' ? 1e3 : viewUnit === 'USD' ? 1 : 1e6;
     const f = Math.pow(10, dec);
     const numCell = raw => ({ t: 'n', v: Math.round((raw / div) * f) / f });
@@ -1552,7 +1809,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
       <div className="filters" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'stretch' }}>
 
         {/* ==================== DATOS: qué carga ==================== */}
-        <div style={{ ...grpCard, flex: '1 1 360px', minWidth: 300 }}>
+        <div style={{ ...grpCard, flex: '1 1 320px', minWidth: 290 }}>
           <div style={grpCap}>Datos</div>
           {/* Contenido en 2 sub-filas fijas (máx 2 líneas): Moneda·Estructura CECOS / Alcance. Los toggles «Incluir» se movieron sobre la tabla. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1569,13 +1826,6 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
               <select value={cecoMode} onChange={e => onCecoMode(e.target.value)} style={fctlSel}>
                 <option value="new">Nuevos</option>
                 <option value="old">Antiguos</option><option value="ajustes">Nueva con ajustes</option>
-              </select>
-            </div>
-            <div className="fgroup" style={{ minWidth: 110 }}>
-              <div style={cap}>YTD 2026 hasta</div>
-              <select value={ytdMes} onChange={e => onYtdMes(e.target.value)} style={fctlSel}
-                title="Hasta qué mes suman el Real y el Ppto YTD de 2026">
-                {MESES_YTD.slice(0, ytdMesMax).map((mn, i) => <option key={i} value={i + 1}>{mn}</option>)}
               </select>
             </div>
             </div>
@@ -1711,7 +1961,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
         </div>
 
         {/* ==================== VISTA Y ACCIONES: formato + acciones ==================== */}
-        <div style={{ ...grpCard, flex: '1 1 360px', minWidth: 280 }}>
+        <div style={{ ...grpCard, flex: '1 1 400px', minWidth: 280 }}>
           <div style={grpCap}>Vista y acciones</div>
           {/* 2 sub-filas: Formato / Opciones · Expandir · Exportar. Filtros se movió a Comparación; Buscar a la cabecera. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1730,11 +1980,28 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
                 <div style={{ display: 'flex' }}>
                   <button type="button" onClick={() => setPresFmt(1)} style={{ ...chipSt(presFmt === 1), borderRadius: '6px 0 0 6px' }}
                     title="Formato 1: Mano de Obra aparte + detalle por Ítem/Gerencia + Actividad Corporativa vs Distribuibles">Formato 1</button>
-                  <button type="button" onClick={() => setPresFmt(2)} style={{ ...chipSt(presFmt === 2), borderRadius: '0 6px 6px 0', borderLeft: 0 }}
+                  <button type="button" onClick={() => setPresFmt(2)} style={{ ...chipSt(presFmt === 2), borderLeft: 0 }}
                     title="Formato 2: resumen ejecutivo por secciones">Formato 2</button>
+                  {/* Formato 3: al entrar deja los defaults pedidos — base Ppto 2027, comparación
+                      Forecast 5+7, apertura por Vicepresidencia y el orden inicial (ver pres3Sorted). */}
+                  <button type="button" style={{ ...chipSt(presFmt === 3), borderRadius: '0 6px 6px 0', borderLeft: 0 }}
+                    onClick={() => {
+                      const virgen = presFmt !== 3;
+                      setPresFmt(3);
+                      if (virgen) { setBaseKey('prop'); setSelCols(['fcst26']); setPresTop('vp'); setPres3Sort(null); }
+                    }}
+                    title="Formato 3: Mano de Obra arriba + Actividad Corporativa y Distribuibles abiertos por «Presentar por» (Seguros e Impuestos en línea propia)">Formato 3</button>
                 </div>
               </div>
             )}
+            {/* «YTD 2026 hasta» vive acá (antes estaba en Datos): es un ajuste de la vista, no de la carga. */}
+            <div className="fgroup" style={{ minWidth: 110 }}>
+              <div style={cap}>YTD 2026 hasta</div>
+              <select value={ytdMes} onChange={e => onYtdMes(e.target.value)} style={fctlSel}
+                title="Hasta qué mes suman el Real y el Ppto YTD de 2026">
+                {MESES_YTD.slice(0, ytdMesMax).map((mn, i) => <option key={i} value={i + 1}>{mn}</option>)}
+              </select>
+            </div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* Opciones de tabla: formato puro (unidad, decimales, Dif/%). S&T y MdO ahora viven en Datos. */}

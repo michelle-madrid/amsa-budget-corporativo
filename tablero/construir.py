@@ -107,7 +107,7 @@ OUT_SHEET = "Outlook 6+6 Unpivot"
 # AUTO-DESCUBRIMIENTO: cada .xlsx dejado en esta carpeta que tenga una hoja «… Unpivot» se suma
 # automáticamente (no hay que editar código). Genera la hoja con: python unpivot_ejercicio.py.
 REV_DIR = os.path.join(UP, "ajustes_forecast")
-PPTO27_FILE = os.path.join(UP, "presupuesto_2027", "PPTO27_25_07_2026_10_40.XLSX")
+PPTO27_FILE = os.path.join(UP, "presupuesto_2027", "PPTO27_03_08_2026_09_15.XLSX")
 PPTO27_SHEET = "Sheet1"
 # CAPEX 2027 (hoja "BD AMSA"): base para la pestaña CAPEX. Header en 2 filas, datos desde la 3.
 CAPEX_FILE = os.path.join(UP, "capex", "Presupuesto CAPEX AMSA 2027 v2.xlsx")
@@ -1075,9 +1075,10 @@ def embeber(data_js, write=True):
         ".mtable.resumen .col-resize{position:absolute;top:0;right:-4px;width:9px;height:100%;cursor:col-resize;z-index:3;}"
         ".mtable.resumen .col-resize:hover{background:color-mix(in srgb,var(--amsa-teal) 35%,transparent);}"
         ".mtable.resumen td.spacer-fill,.mtable.resumen th.spacer-fill{padding:0;border:none;background:transparent;}"
-        ".mtable.resumen tbody .rowhide{opacity:0;border:none;background:transparent;color:var(--fg-soft);cursor:pointer;font-size:13px;line-height:1;margin-left:6px;padding:0 3px;transition:opacity .1s;}"
-        ".mtable.resumen tbody tr:hover .rowhide{opacity:.5;}"
-        ".mtable.resumen tbody .rowhide:hover{opacity:1;color:var(--amsa-red);}"
+        # ⊘ ocultar fila: tabla Resumen y tabla de Presentación (Formato 2) → selector sin `.resumen`.
+        ".mtable tbody .rowhide{opacity:0;border:none;background:transparent;color:var(--fg-soft);cursor:pointer;font-size:13px;line-height:1;margin-left:6px;padding:0 3px;transition:opacity .1s;}"
+        ".mtable tbody tr:hover .rowhide{opacity:.5;}"
+        ".mtable tbody .rowhide:hover{opacity:1;color:var(--amsa-red);}"
         ".hscroll-top{scrollbar-width:thin;}.hscroll-top::-webkit-scrollbar{height:10px;}"
         "/*/RESUMEN-CSS*/")
     html = html.replace(
