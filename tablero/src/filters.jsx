@@ -1,6 +1,9 @@
 /* global React */
 const { useState: useStateF, useRef: useRefF, useEffect: useEffectF } = React;
 
+// Ver app.jsx: en los dashboards de UNA compañía distribuible se ocultan Alcance y Compañía.
+const SOLO_DIST_F = !!(window.V2_DATA && window.V2_DATA.soloDist);
+
 /* ---------------- Multi-select dropdown ---------------- */
 function MultiSelect({ options, selected, onChange, placeholder, gold, searchable, impliedAll }) {
   const [open, setOpen] = useStateF(false);
@@ -247,7 +250,9 @@ function FilterBar(props) {
   const [nHidden, setNHidden] = useStateF(0);
   const barRef = useRefF(null);
   const collapseW = useRefF(0);
-  const N_COLLAPSIBLE = 5; // Grupo AMSA, Ítem, VP, Gerencia, Compañía (colapsan desde el final)
+  // Grupo AMSA, Ítem, VP, Gerencia, Compañía (colapsan desde el final). Tiene que coincidir con
+  // el largo de collapsibleEls: sin Compañía (dashboards de una sola compañía) son 4.
+  const N_COLLAPSIBLE = SOLO_DIST_F ? 4 : 5;
   useEffectF(() => {
     const el = barRef.current; if (!el) return;
     const measure = () => {
@@ -289,13 +294,14 @@ function FilterBar(props) {
         <MultiSelect options={gerOpts} selected={st.gers} onChange={v => set({ gers: v })} placeholder="Todas" searchable />
       </div>
     </div>,
+    ...(SOLO_DIST_F ? [] : [
     <div className="fgroup" style={{ minWidth: 130, opacity: distMode ? 1 : 0.45 }}
       title={distMode ? null : 'Aplica en modo Distribuible / Ambos'} key="comp">
       <div className="fcap">Compañía</div>
       <div className="fctl" style={distMode ? null : { pointerEvents: 'none' }}>
         <MultiSelect options={compOpts} selected={st.companies} onChange={v => set({ companies: v })} placeholder="Todas" />
       </div>
-    </div>,
+    </div>]),
   ];
   const nShown = N_COLLAPSIBLE - nHidden;
 
@@ -330,7 +336,7 @@ function FilterBar(props) {
         </div>
       </div>
 
-      <div className="fgroup" style={{ minWidth: 210 }}>
+      <div className="fgroup" style={{ minWidth: 210, display: SOLO_DIST_F ? 'none' : null }}>
         <div className="fcap">Datos</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <ModeChip label="Corporativo" on={corpOn} onClick={() => setFlags(!corpOn, distOn)} />

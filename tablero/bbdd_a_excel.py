@@ -6,9 +6,11 @@ Pensado para usuarios NO técnicos: DOS hojas, línea a línea, con los NOMBRES 
 (VP, Gerencia, Desc. CECO, Ítem…), sin cruzar tablas:
   · «Reales»                  → gasto Real (2022–2025 y 2026 YTD).
   · «Presupuestos y Forecast» → Ppto 2025/2026, Forecast 5+7 2026 y Ppto 2027.
-Más una hoja "Léame" de ayuda. Formato amigable (filtros, encabezados, freeze).
+Ambas hojas traen Año y Mes de cada línea. Formato amigable (filtros, encabezados, freeze).
 
-Requiere haber corrido antes `python construir.py` (genera bbdd/).
+Requiere haber corrido antes `python construir.py` (genera bbdd/). El detalle con MES lo arma
+detalle_mensual.py releyendo las fuentes (el parquet del dashboard agrega el mes); la primera
+corrida tarda unos minutos y queda cacheada en bbdd/*_mes.parquet.
 Uso:
   python bbdd_a_excel.py --gerencia "Data y Analitica"  → Excel de ESA Gerencia en salida/
   python bbdd_a_excel.py --vp "Comercializacion"        → Excel de ESA VP en salida/
@@ -30,6 +32,8 @@ import pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
+import detalle_mensual
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 BBDD = os.path.join(HERE, "bbdd")
 SALIDA_DIR = os.path.join(os.path.dirname(HERE), "salida")
@@ -41,7 +45,9 @@ BUCKET_LBL = {"2022": "2022", "2023": "2023", "2024": "2024", "2025": "2025",
               "2026ytd": "2026 YTD (ene–may)", "2026fy": "2026 FY (Ppto anual)"}
 MEDIDA_LBL = {"ppto_2025": "Ppto 2025", "ppto_2026ytd": "Ppto 2026 YTD (ene–may)",
               "ppto_2026fy": "Ppto 2026 FY (anual)", "forecast_2026": "Forecast 5+7 2026",
-              "ppto_2027": "Ppto 2027", "out66": "Outlook 6+6 2026"}
+              "ppto_2027": "Ppto 2027", "out66": "Outlook 6+6 2026",
+              "reversas_fcst": "Reversas Forecast 5+7"}
+MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
 
 def log(m):
@@ -63,12 +69,12 @@ def _load(name):
 
 
 def cargar(con_detalle):
-    """Carga las tablas parquet UNA vez (para filtrar luego por VP sin releer)."""
+    """Carga las tablas parquet UNA vez (para filtrar luego por VP sin releer).
+    El detalle sale de detalle_mensual (relee las fuentes para traer el MES; cachea en bbdd/)."""
     dfs = {n: _load(n) for n in ("fact_registros", "fact_anual", "fact_dotaciones",
                                  "dim_cecos", "dim_items", "dim_clacos", "dim_companias")}
     if con_detalle:
-        dfs["fact_detalle_real"] = _load("fact_detalle_real")
-        dfs["fact_detalle_ppto"] = _load("fact_detalle_ppto")
+        dfs["fact_detalle_real"], dfs["fact_detalle_ppto"] = detalle_mensual.construir()
     return dfs
 
 
@@ -102,6 +108,12 @@ def construir_hojas(dfs, P, cecos=None):
     def filt(df):
         return df if cecos is None else df[df["ceco"].isin(cecos)]
 
+    def mes_lbl(s):
+        """'05' → '05 May' (ordena bien alfabéticamente y se lee claro)."""
+        n = pd.to_numeric(s, errors="coerce")
+        return s.where(~n.between(1, 12), s + " " + n.fillna(0).astype(int)
+                       .map(lambda i: MESES[i - 1] if 1 <= i <= 12 else ""))
+
     # 1) Reales — gasto Real desglosado (Contrapartida › Texto pedido › Denominación › Documento).
     dr = _pegar(filt(dfs["fact_detalle_real"]), P)
     dr["Período"] = dr["bucket"].map(BUCKET_LBL).fillna(dr["bucket"])
@@ -109,7 +121,7 @@ def construir_hojas(dfs, P, cecos=None):
         "VP": dr["vp"], "Gerencia": dr["gerencia"], "Desc. CECO": dr["desc_ceco"], "CECO": dr["ceco"],
         "Ítem Relevante": dr["itemrel_nombre"], "Ítem": dr["item_nombre"], "Tipo Costo": dr["tipo_costo"],
         "Contrapartida": dr["contra"], "Texto pedido": dr["texto_pedido"], "Denominación": dr["denominacion"],
-        "Documento": dr["documento"], "Período": dr["Período"],
+        "Documento": dr["documento"], "Período": dr["Período"], "Año": dr["anio"], "Mes": mes_lbl(dr["mes"]),
         "Real (USD)": dr["valor_n"], "Real (Aj. 2027)": dr["valor_a"],
     })
 
@@ -120,6 +132,7 @@ def construir_hojas(dfs, P, cecos=None):
         "VP": dp["vp"], "Gerencia": dp["gerencia"], "Desc. CECO": dp["desc_ceco"], "CECO": dp["ceco"],
         "Ítem Relevante": dp["itemrel_nombre"], "Ítem": dp["item_nombre"], "Tipo Costo": dp["tipo_costo"],
         "Concepto Gasto": dp["concepto_gasto"], "Actividad": dp["actividad"], "Medida": dp["Medida"],
+        "Ajuste": dp["ajuste"], "Año": dp["anio"], "Mes": mes_lbl(dp["mes"]),
         "Valor (USD)": dp["valor_n"], "Valor (Aj. 2027)": dp["valor_a"],
     })
 

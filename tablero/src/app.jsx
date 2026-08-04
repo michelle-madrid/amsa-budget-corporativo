@@ -2,6 +2,14 @@
    useTweaks, TweaksPanel, TweakSection, TweakSlider, TweakRadio, TweakToggle */
 const { useState, useMemo, useCallback, useEffect } = React;
 
+// Dashboards que traen SOLO gasto distribuible de UNA compañía (los de salida/Distribuibles/):
+// el selector Alcance (Corporativo/Distribuible) y el filtro Compañía no aplican y se ocultan.
+// No cambia ningún número: sin CECOs corporativos, 'both' ya equivale a 'dist'.
+const SOLO_DIST = !!(window.V2_DATA && window.V2_DATA.soloDist);
+// Ahí el alcance arranca (y se queda) en 'dist'. Da lo mismo que 'both' en cifras —no hay CECOs
+// corporativos— pero deja el subtítulo como «Distribuible» en vez de «Corporativo + Distribuible».
+const DEF_DATAMODE = SOLO_DIST ? 'dist' : 'both';
+
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "unit": "MUSD",
   "decimals": 2,
@@ -504,7 +512,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
   st = st || {}; set = set || (() => {});
   // Filtros COMPARTIDOS con la pestaña "Gastos Corporativos": viven en el estado del App
   // (no se reinician al cambiar de pestaña) y se mantienen sincronizados entre ambas vistas.
-  const dataMode = st.dataMode || 'both';
+  const dataMode = st.dataMode || DEF_DATAMODE;
   const setDataMode = v => set({ dataMode: v });
   const vps = st.vps || [], gers = st.gers || [], items = st.items || [], itemrels = st.itemrels || [];
   const tcs = st.tcs || [], clases = st.clases || [], aps = st.aps || [], companias = st.companias || [], stMode = st.stMode || '', cecos = st.cecos || [];
@@ -1829,7 +1837,7 @@ function ResumenView({ overrides, unit, dec, onDec, valMode, cecoMode, onValMode
               </select>
             </div>
             </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ display: SOLO_DIST ? 'none' : 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div className="fgroup" style={{ minWidth: 200 }}>
               <div style={cap}>Alcance</div>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -2858,7 +2866,7 @@ function App() {
 
   const [st, setSt] = useState({
     month: 11,          // año completo (sin filtro mensual: solo acumulado anual)
-    dataMode: 'both',   // corp | dist | both | none (chips Corporativo/Distribuible)
+    dataMode: DEF_DATAMODE,   // corp | dist | both | none (chips Corporativo/Distribuible)
     items: [], itemrels: [], vps: [], gers: [], companies: [], companias: [], cecos: [], clacos: [], tcs: ['C1'],   // Tipo Costo por defecto: solo C1
     gamsas: ['AMSA Actividades Corporativas'],   // Grupo AMSA por defecto: solo Actividades Corporativas (oculta «Otros gastos AMSA»)
     hidden: { claco: ['6125101'] },  // oculto por defecto: CLACO 6125101 "Fletes por venta cobre" (solo aparece en VP Comercialización) → no se considera por defecto; restaurable con "⊘ restaurar"
@@ -2985,7 +2993,7 @@ function App() {
   const series = useMemo(() => A.annualSeries(opts), [opts]);
   const dist = useMemo(() => A.distribuible(opts), [opts]);
   const dims = useMemo(() => A.dimsFor(opts), [opts]);
-  const modeLbl = { corp: 'Corporativo', dist: 'Distribuible', both: 'Corporativo + Distribuible', none: 'Sin datos seleccionados' }[st.dataMode || 'both'];
+  const modeLbl = { corp: 'Corporativo', dist: 'Distribuible', both: 'Corporativo + Distribuible', none: 'Sin datos seleccionados' }[st.dataMode || DEF_DATAMODE];
   const corpOn = st.dataMode === 'corp' || st.dataMode === 'both';
   const distOn = st.dataMode === 'dist' || st.dataMode === 'both';
   const companiesActive = st.companies.length > 0 && st.companies.length < A.COMPANIAS.length;
@@ -3216,7 +3224,12 @@ function App() {
           {[['dashboard', 'Gastos Corporativos'], ['resumen', 'Tabla Resumen Gastos'],
             ...((window.CAPEX_DATA && window.CAPEX_DATA.rows && window.CAPEX_DATA.rows.length) ? [['capex', 'CAPEX']] : []),  // solo si hay data de CAPEX embebida
             ...((A.dotRecords && A.dotRecords.length) ? [['dotaciones', 'Dotaciones AMSA (FTE)']] : []),  // se oculta si no hay dotaciones (ej. dashboards por VP)
-            ['dict', 'Diccionario (CECO · Ítem)']].map(([id, lbl]) => (
+            ['dict', 'Diccionario (CECO · Ítem)']]
+            // Whitelist opcional de pestañas: V2_DATA.soloTabs = ['dashboard','resumen'] deja SOLO
+            // esas (la usan los dashboards recortados, ej. Distribuibles por compañía). Sin el
+            // campo, se muestran todas las que tengan data.
+            .filter(([id]) => !(window.V2_DATA && window.V2_DATA.soloTabs) || window.V2_DATA.soloTabs.indexOf(id) >= 0)
+            .map(([id, lbl]) => (
             <button key={id} type="button" onClick={() => setPage(id)} style={{
               border: 0, background: 'transparent', cursor: 'pointer', padding: '8px 16px',
               fontFamily: 'var(--font-disp)', fontWeight: 700, fontSize: 13, marginBottom: -2,
