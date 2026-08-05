@@ -6,3 +6,11 @@
 Thumbs.db
 desktop.ini
 ~$*
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Excel generados desde la BBDD (regenerables: python bbdd_a_excel.py). Los parquet SÍ se versionan.
+tablero/bbdd/*.xlsx
+salida/por_vp/*/*.xlsx
